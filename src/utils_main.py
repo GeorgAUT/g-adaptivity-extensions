@@ -7,23 +7,37 @@ import plotly.graph_objects as go
 from adjustText import adjust_text
 from scipy.spatial import ConvexHull
 
-@torch.no_grad()
-def loss_histogram(out, x_phys):
-    # Compute the element-wise absolute differences
-    differences = torch.abs(out - x_phys)
 
-    # Flatten the differences to a 1D tensor
-    differences_flat = differences.view(-1)
+def inner_progress(curr, total, width=10, bars=u'▉▊▋▌▍▎▏ '[::-1],
+               full='█', empty=' '):
+    """Create a progress bar string for inner loops to use in tqdm postfix.
+    
+    This function generates a text-based progress bar that can be used in the postfix
+    of an outer tqdm progress bar to visualize nested progress cleanly without creating
+    multiple progress bars that could clutter the terminal output.
+    
+    Args:
+        curr: Current step
+        total: Total steps
+        width: Width of the progress bar
+        bars: Characters to use for fractional progress
+        full: Character for completed sections
+        empty: Character for empty sections
+    
+    Returns:
+        Formatted progress bar string like: "75% |███████▌  | 15/20"
+    """
+    p = curr / total 
+    nfull = int(p * width)
+    return "{:>3.0%} |{}{}{}| {:>2}/{}".format(
+        p, 
+        full * nfull,
+        bars[int(len(bars) * ((p * width) % 1))] if nfull < width else '',
+        empty * (width - nfull - 1),
+        curr, total
+    )
 
-    # Convert to a NumPy array for plotting
-    differences_numpy = differences_flat.numpy()
 
-    # Plot a histogram
-    plt.hist(differences_numpy, bins=30)
-    plt.xlabel('Absolute Difference')
-    plt.ylabel('Frequency')
-    plt.title('Histogram of Contributions to the Loss')
-    plt.show()
 
 def plot_training_evol(y_list, title=None, ax=None, plot_show=False, batch_loss_list=None, batches_per_epoch=None):
     if ax is None:
@@ -89,6 +103,7 @@ def vizualise_grid(mesh_tensor, opt=None):
         if opt['show_plots']:
             plt.show()
     return fig
+
 
 def vizualise_grid_with_edges(mesh_tensor, edges, ax=None, opt=None, boundary_nodes=None, directed_edges=False, node_labels=False,
                               node_boundary_map=None, corner_nodes=None, edge_weights=None, width=0.2):
@@ -322,17 +337,6 @@ def plot_3d_pyg_graph_interactive(graph, compORphys="comp"):
 
     # Save the figure in HTML
     fig.write_html("3DCube.html")
-
-def debug_plots(data, opt):
-    edge_index0 = data.edge_index
-    vizualise_grid_with_edges(data.x_comp, edge_index0, opt)
-    vizualise_grid_with_edges(data.x_comp, edge_index0[:, data.to_boundary_edge_mask], opt, directed_edges=True)
-    vizualise_grid_with_edges(data.x_comp, edge_index0[:, data.to_corner_nodes_mask], opt, directed_edges=True)
-    vizualise_grid_with_edges(data.x_comp, edge_index0[:, data.diff_boundary_edges_mask], opt, directed_edges=True)
-    mask = ~data.to_boundary_edge_mask * ~data.to_corner_nodes_mask * ~data.diff_boundary_edges_mask
-    vizualise_grid_with_edges(data.x_comp, edge_index0[:, mask], opt, directed_edges=True)
-    vizualise_grid_with_edges(data.x_comp, edge_index0[:, ~mask], opt, directed_edges=True)
-    plot2d(graph=data)
 
 
 def is_outside_convex_hull(node, neighbors, plot_cvx_hull=False):

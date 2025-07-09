@@ -1,11 +1,15 @@
 import os
-import numpy as np
-import random
+import requests
+import tarfile
 import torch
 import wandb
+from petsc4py import PETSc
+from mpi4py import MPI
 import matplotlib.pyplot as plt
+from firedrake import FunctionSpace, VectorFunctionSpace, Function
 
-from params import get_params, run_params, get_arg_list
+from src.params import get_arg_list
+
 
 def to_float32(obj):
     if isinstance(obj, torch.Tensor):
@@ -18,6 +22,50 @@ def to_float32(obj):
         return [to_float32(item) for item in obj]
     # Handle other types as needed
     return obj
+
+
+def save_function(function, function_filename, comm=MPI.COMM_WORLD):
+    """
+    Save mesh as VTK and function as PETSc binary.
+
+    Parameters:
+      mesh: Firedrake Mesh to save.
+      function: Firedrake Function to save.
+    """
+    # Save function to PETSc binary
+    # function_filename = os.path.join(case_dir, function_str + ".bin")
+    with function.dat.vec_ro as vec:
+        viewer = PETSc.Viewer().createBinary(function_filename, "w", comm=comm)
+        vec.view(viewer)
+        viewer.destroy()
+
+
+def load_function(mesh, function_filename, family="CG", degree=1,
+                          comm=MPI.COMM_WORLD):
+    """Load mesh and function from MSH and PETSc binary formats."""
+    # Load function
+    V = FunctionSpace(mesh, family, degree)
+    func = Function(V)
+    with func.dat.vec_wo as vec:
+        viewer = PETSc.Viewer().createBinary(function_filename, "r", comm=comm)
+        vec.load(viewer)
+        viewer.destroy()
+
+    return func
+
+
+def load_vector_function(mesh, function_filename, family="CG", degree=1,
+                          comm=MPI.COMM_WORLD):
+    """Load mesh and function from MSH and PETSc binary formats."""
+    # Load function
+    V = VectorFunctionSpace(mesh, family, degree)
+    func = Function(V)
+    with func.dat.vec_wo as vec:
+        viewer = PETSc.Viewer().createBinary(function_filename, "r", comm=comm)
+        vec.load(viewer)
+        viewer.destroy()
+
+    return func
 
 
 def convert_to_boundary_mask(boundary_nodes, num_nodes):
@@ -38,6 +86,7 @@ def map_firedrake_to_cannonical_ordering_1d(x_comp, n):
     # Map between firedrake ordering and regualr grid ordering
     mapping_dict = {}
     mapping_tensor = torch.zeros(x_comp.shape[0], dtype=torch.long)
+
     #loop over cannonical grid and find closest point in FD grid
     for i in range(n):
         cannon_idx = i
@@ -75,6 +124,63 @@ def map_firedrake_to_cannonical_ordering_2d(x_comp, n, m):
             mapping_dict[(i, j)] = fd_index.item()
 
     return mapping_dict, mapping_tensor, X_grid, Y_grid, X_vec, Y_vec
+
+
+def map_firedrake_to_cannonical_ordering_3d(x_comp, n, m, k):
+    """
+    Map 3D Firedrake mesh coordinates to canonical grid ordering.
+
+    Args:
+        x_comp: Tensor of shape (num_nodes, 3) containing (x,y,z) coordinates
+        n: Number of points in x direction
+        m: Number of points in y direction
+        k: Number of points in z direction
+
+    Returns:
+        mapping_dict: Dictionary mapping (i,j,k) grid positions to Firedrake mesh indices
+        mapping_tensor: Tensor mapping canonical indices to Firedrake indices
+        X_grid, Y_grid, Z_grid: 3D meshgrid arrays
+        X_vec, Y_vec, Z_vec: Flattened coordinate arrays
+    """
+    X_FD, Y_FD, Z_FD = x_comp.T
+
+    # Rescale X, Y, Z to [0, 1] if not already
+    X_scaled = (X_FD - torch.min(X_FD)) / (torch.max(X_FD) - torch.min(X_FD))
+    Y_scaled = (Y_FD - torch.min(Y_FD)) / (torch.max(Y_FD) - torch.min(Y_FD))
+    Z_scaled = (Z_FD - torch.min(Z_FD)) / (torch.max(Z_FD) - torch.min(Z_FD))
+
+    # Create canonical-style 3D grid
+    X_grid, Y_grid, Z_grid = torch.meshgrid(
+        torch.linspace(0, 1, n),
+        torch.linspace(0, 1, m),
+        torch.linspace(0, 1, k),
+        indexing='ij'
+    )
+
+    X_vec = X_grid.reshape(-1)
+    Y_vec = Y_grid.reshape(-1)
+    Z_vec = Z_grid.reshape(-1)
+
+    # Map between Firedrake ordering and regular grid ordering
+    mapping_dict = {}
+    mapping_tensor = torch.zeros(x_comp.shape[0], dtype=torch.long)
+
+    # Loop over canonical grid and find closest point in FD grid
+    for i in range(n):
+        for j in range(m):
+            for l in range(k):  # Using 'l' since 'k' is already used for dimension
+                cannon_idx = i * (m * k) + j * k + l
+                x, y, z = X_grid[i, j, l], Y_grid[i, j, l], Z_grid[i, j, l]
+                fd_index = torch.argmin(
+                    (X_scaled - x) ** 2 +
+                    (Y_scaled - y) ** 2 +
+                    (Z_scaled - z) ** 2
+                )
+                mapping_tensor[cannon_idx] = fd_index
+                mapping_dict[(i, j, l)] = fd_index.item()
+
+    return mapping_dict, mapping_tensor, X_grid, Y_grid, Z_grid, X_vec, Y_vec, Z_vec
+
 
 def alt_diag_edges(mapping_dict, n, m, boundary_nodes):
     """
@@ -211,58 +317,105 @@ def make_data_name(opt, train_test="test"):
     decimal_places = 2 if opt['mon_reg'] < 0.1 else 1
     formatted_mon_reg = f"{opt['mon_reg']:.{decimal_places}f}"
 
-    if opt['data_type'] == "all": #builds test set for all scales and powers
-        #need to specify: data_type, mesh_type, mon_type, mesh_dims, mon_reg
-        if data_dim == 1:
-            data_name = f"{opt['data_type']}_1d_test_{mesh_dims[0]}_{formatted_mon_reg}reg"
-        elif data_dim == 2:
-            if opt['mesh_type'] == "M2N":
-                alpha_beta = ''
-                if opt['M2N_alpha'] is not None:
-                    alpha_beta += f"_a{opt['M2N_alpha']}"
-                if opt['M2N_beta'] is not None:
-                    alpha_beta += f"_b{opt['M2N_beta']}"
+    # Define auxiliary dataname variable for irregular geometries
+    if opt['mesh_geometry']=='rectangle':
+        geometry_name = f"{opt['mesh_geometry']}_{mesh_dims[0]}"
+    else:
+        geometry_name = f"{opt['mesh_geometry']}"
+    # dataname need to specify: data_type, monitor_type, mon_type, mesh_dims, mon_reg
+    # builds test set for all scales and powers
+    # Add patch info if using patched dataset
 
-                data_name = f"{opt['data_type']}_2d_test_{opt['mesh_type']}" \
-                                   f"_{opt['fast_M2N_monitor']}_{mesh_dims[0]}_{formatted_mon_reg}reg{alpha_beta}"
-            else:
-                data_name = f"{opt['data_type']}_2d_test_{opt['mesh_type']}" \
-                                   f"_{mesh_dims[0]}_{formatted_mon_reg}reg"
-
-    elif opt['data_type'] == 'structured':
-        num_data = opt['num_train'] if train_test == 'train' else opt['num_test']
+    if opt['data_type'] == 'structured':
+        # num_data = opt['num_train'] if train_test == 'train' else opt['num_test']
+        num_data_dict = {1: 9, 2: 25}
+        num_data = num_data_dict[data_dim]
         if data_dim == 1:
-            data_name = f"{opt['data_type']}_1d_{train_test}_{num_data}_{mesh_dims[0]}_" \
+            data_name = f"{opt['pde_type']}_{opt['data_type']}_1d_{train_test}_{num_data}_{geometry_name}_" \
                         f"{formatted_mon_reg}reg_{opt['num_gauss']}gauss_{opt['scale']}scale_{opt['mon_power']}pow"
         elif data_dim == 2:
-            data_name = f"{opt['data_type']}_2d_{train_test}_{num_data}_{opt['mesh_type']}_{mesh_dims[0]}_" \
+            data_name = f"{opt['pde_type']}_{opt['data_type']}_2d_{train_test}_{num_data}_{opt['monitor_type']}_{geometry_name}_" \
                         f"{formatted_mon_reg}reg_{opt['num_gauss']}gauss_{opt['scale']}scale_{opt['mon_power']}pow"
 
     elif opt['data_type'] == 'randg':
         num_data = opt['num_train'] if train_test == 'train' else opt['num_test']
         if data_dim == 1:
             if opt['num_gauss'] > 1:
-                data_name = f"{opt['data_type']}_1d_{train_test}_{num_data}_{mesh_dims[0]}_{formatted_mon_reg}reg_{opt['num_gauss']}gauss"
+                data_name = f"{opt['pde_type']}_{opt['data_type']}_1d_{train_test}_{num_data}_{geometry_name}_{formatted_mon_reg}reg_{opt['num_gauss']}gauss"
             else:
-                data_name = f"{opt['data_type']}_1d_{train_test}_{num_data}_{mesh_dims[0]}_{formatted_mon_reg}reg"
+                data_name = f"{opt['pde_type']}_{opt['data_type']}_1d_{train_test}_{num_data}_{geometry_name}_{formatted_mon_reg}reg"
 
         elif data_dim == 2:
             if opt['num_gauss'] > 1:
-                data_name = f"{opt['data_type']}_2d_{train_test}_{num_data}_{opt['mesh_type']}_{mesh_dims[0]}_{formatted_mon_reg}reg_{opt['num_gauss']}gauss"
+                data_name = f"{opt['pde_type']}_{opt['data_type']}_2d_{train_test}_{num_data}_{opt['monitor_type']}_{geometry_name}_{formatted_mon_reg}reg_{opt['num_gauss']}gauss"
             else:
-                data_name = f"{opt['data_type']}_2d_{train_test}_{num_data}_{opt['mesh_type']}_{mesh_dims[0]}_{formatted_mon_reg}reg"
+                data_name = f"{opt['pde_type']}_{opt['data_type']}_2d_{train_test}_{num_data}_{opt['monitor_type']}_{geometry_name}_{formatted_mon_reg}reg"
 
     elif opt['data_type'] == 'randg_mix':
         num_data = opt['num_train'] if train_test == 'train' else opt['num_test']
         if data_dim == 1:
-            data_name = f"{opt['data_type']}_1d_{train_test}_{num_data}_{formatted_mon_reg}reg_{opt['num_gauss_range'][0]}_{opt['num_gauss_range'][-1]}gauss"
+            data_name = f"{opt['pde_type']}_{opt['data_type']}_1d_{train_test}_{num_data}_{opt['monitor_type']}_{geometry_name}_{formatted_mon_reg}reg_{opt['num_gauss_range'][0]}_{opt['num_gauss_range'][-1]}gauss"
         elif data_dim == 2:
-            data_name = f"{opt['data_type']}_2d_{train_test}_{num_data}_{formatted_mon_reg}reg_{opt['num_gauss_range'][0]}_{opt['num_gauss_range'][-1]}gauss"
+            data_name = f"{opt['pde_type']}_{opt['data_type']}_2d_{train_test}_{num_data}_{opt['monitor_type']}_{geometry_name}_{formatted_mon_reg}reg_{opt['num_gauss_range'][0]}_{opt['num_gauss_range'][-1]}gauss"
+        elif data_dim == 3:
+            data_name = f"{opt['pde_type']}_{opt['data_type']}_3d_{train_test}_{num_data}_{opt['monitor_type']}_{geometry_name}_{formatted_mon_reg}reg_{opt['num_gauss_range'][0]}_{opt['num_gauss_range'][-1]}gauss"
 
+        if opt['anis_gauss']:
+            data_name += "_anis"
+        else:
+            data_name = data_name + "_iso"
 
+    elif opt['data_type'] == 'RBF':
+        num_data = opt['num_train'] if train_test == 'train' else opt['num_test']
+        if data_dim == 2:
+            data_name = f"{opt['pde_type']}_{opt['data_type']}_2d_{train_test}_{num_data}_{opt['monitor_type']}_{geometry_name}"
 
+    # Add patch info if using patched dataset
+    if opt.get('use_patches', False):
+        patch_str = f"_p{opt.get('num_patches_x', 10)}x{opt.get('num_patches_y', 10)}"
+        data_name += patch_str
 
-    opt['data_name'] = data_name
+    if opt['pde_type'] in ['Burgers','NavierStokes']:
+        data_name += f"_{opt['num_time_steps']}steps"
+
+    data_name += f"_{opt['mesh_file_type']}"
+
+    if wandb.run is not None:
+        wandb.config.update({"data_name": data_name}, allow_val_change=True)
+    else:
+        opt['data_name'] = data_name
+
+    opt['dataset'] = f"fd_{opt['monitor_type']}_{data_dim}d"
 
     return opt
 
+#todo put in data utils
+def download_dataset():
+    """Download and extract dataset from Zenodo if not present."""
+    dataset_path = "data/processed"
+    zenodo_url = "https://zenodo.org/record/1234567/files/g-adaptivity-dataset.tar.gz"
+
+    if not os.path.exists(dataset_path):
+        os.makedirs("data", exist_ok=True)
+
+        print(f"Downloading dataset from Zenodo...")
+        r = requests.get(zenodo_url, stream=True)
+        with open("data/dataset.tar.gz", 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+
+        print(f"Extracting dataset...")
+        with tarfile.open("data/dataset.tar.gz") as tar:
+            tar.extractall(path="data")
+
+        print(f"Dataset downloaded and extracted to {dataset_path}")
+
+"""
+## Dataset
+
+The dataset for this paper is available on Zenodo: 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.1234567.svg)](https://doi.org/10.5281/zenodo.1234567)
+
+The code will automatically download the required dataset files on first run.
+"""

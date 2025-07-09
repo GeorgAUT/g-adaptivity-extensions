@@ -1,0 +1,70 @@
+# Base configuration template
+# High-level experiment settings
+run:
+  wandb: true
+  wandb_project: "camera_ready"
+  show_dataset_plots: false
+  wandb_log_plots: true
+  pde_type: "Poisson"  # 'Poisson', 'Burgers', 'NavierStokes'
+  data_type: "randg_mix"  # 'randg', 'randg_mix', 'RBF'
+  model: "UM2N_T"  # 'GNN', 'UM2N_T', etc.
+  warm_start: false
+  warm_start_path: ""
+  device: "cuda"  # 'cuda' or 'cpu'
+  seed: 42
+
+# Data-specific parameters
+data:
+  monitor_type: "monitor_hessian"  # "monitor_hessian_approx", "mmpde5" for 1D
+  monitor_alpha: 5.0  # 40 for 3D experiments, 5 otherwise
+  mesh_geometry: "rectangle"  # 'rectangle', 'cylinder_100', 'polygon_010'
+  mesh_dims: [15, 15]
+  rand_gauss: true
+  anis_gauss: false
+  num_train: 275
+  num_test: 3
+  mesh_dims_train: [[15, 15], [20, 20]]
+  mesh_dims_test: [[12, 12], [13, 13], [14, 14], [15, 15], [16, 16], [17, 17], [18, 18], [19, 19], [20, 20], [21, 21], [22, 22], [23, 23]]
+  data_dir: "../data"
+  # Uncomment and modify if needed for specific dataset indices
+  # train_idxs: []
+  # test_idxs: []
+
+# PDE-specific parameters
+pde:
+  # Burgers parameters (only used when pde_type is 'Burgers')
+  nu: 0.001
+  amplitude_rescale: 0.6
+  timestep: 0.02
+  num_time_steps: 10
+  
+  # NavierStokes parameters (only used when pde_type is 'NavierStokes')
+  U_mean: 1.0
+  # timestep and num_time_steps defined above
+
+# Training/experiment parameters
+exp:
+  epochs: 1
+  batch_size: 1
+  gnn_dont_train: false
+  loss_type: "pde_loss_regularised"  # 'pde_loss_firedrake', 'UM2N_loss'
+  loss_regulariser_weight: 0.01
+  lr: 0.001
+
+# Model architecture parameters
+model:
+  # Specific to UM2N_T
+  num_transformer_in: 3
+  num_transformer_out: 16
+  num_transformer_embed_dim: 64
+  num_transformer_heads: 4
+  num_transformer_layers: 1
+  transformer_training_mask: false
+  transformer_key_padding_training_mask: false
+  transformer_attention_training_mask: false
+  transformer_training_mask_ratio_lower_bound: 0.5
+  transformer_training_mask_ratio_upper_bound: 0.9
+  pretrained_weights: null
+  GNN_diffusion: true
+  gnn_activation: "relu"  # 'swish', 'tanh', 'softplus'
+  gnn_num_layers: 3

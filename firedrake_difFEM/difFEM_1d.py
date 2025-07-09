@@ -435,7 +435,6 @@ def fast_inner_product(mesh, f ,load_quad_points,num_meshpoints):
     return RHS.unsqueeze(-1)
 
 def gradient_meshpoints_1D_Burgers_PDE_loss_direct_mse(opt,data, x_phys):
-    ## TODO!
     mesh_points = torch.tensor(x_phys.detach().numpy(), requires_grad=True)
     # Extract some relevant parameters
     num_meshpoints = opt['mesh_dims'][0]

@@ -47,6 +47,7 @@ def poisson2d_fgauss_b0(mesh, c=[0.5, 0.5], s=[0.2, 0.2]):
 
     return uu, u_true, F, pde_params
 
+
 def poisson1d_fmultigauss_bcs(mesh, c_list, s_list, num_gaussians=1, rand_gaussians=False, bc_type="u_true"):
     '''solves Poisson's equation on a given mesh with f MULTI gaussian and b=0
     rand_gaussians: if True, sample num_gaussians centers and scales from a uniform distribution
@@ -115,7 +116,7 @@ def poisson1d_fmultigauss_bcs(mesh, c_list, s_list, num_gaussians=1, rand_gaussi
     return uu, u_true, F #, pde_params
 
 
-def poisson2d_fmultigauss_bcs(mesh, c_list, s_list, num_gaussians=1, rand_gaussians=False, bc_type="u_true", fast=False):
+def poisson2d_fmultigauss_bcs(mesh, c_list, s_list, num_gaussians=1, rand_gaussians=False, bc_type="u_true", verbose=False):
     '''solves Poisson's equation on a given mesh with f MULTI gaussian and b=0
     rand_gaussians: if True, sample num_gaussians centers and scales from a uniform distribution
     :param bc_type: '''
@@ -179,7 +180,7 @@ def poisson2d_fmultigauss_bcs(mesh, c_list, s_list, num_gaussians=1, rand_gaussi
 
     solve(a == F * v * dx, uu, bcs=bcs, solver_parameters={"ksp_type": "preonly", "pc_type": "lu"})
 
-    if fast == False:
+    if verbose:
         #%% Evaluate the L2 error
         print('\n\nFinished solve, L^2 error is:')
         print(sqrt(assemble(inner(uu - u_true, uu - u_true) * dx)))

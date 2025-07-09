@@ -1,33 +1,39 @@
-import time
-import pandas as pd
 import numpy as np
+import pandas as pd
 import torch
-from firedrake import VectorFunctionSpace, Function, dx, inner, assemble, sqrt, UnitIntervalMesh, UnitSquareMesh, FunctionSpace
-# from matplotlib.pyplot import plot, tripcolor, triplot
-from firedrake.pyplot import plot, tripcolor, triplot
-from torch_geometric.data import DataLoader
+import wandb
+from tqdm import tqdm
+import time
+from torch_geometric.loader import DataLoader
 from torch_geometric.utils import to_networkx
 import networkx as nx
+import matplotlib
+#matplotlib.use('TkAgg')  # Switch to a different backend to avoid PyCharm's custom backend issues
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
-import wandb
+import pyvista as pv
+
+from firedrake import VectorFunctionSpace, Function, dx, inner, assemble, sqrt, UnitIntervalMesh, UnitSquareMesh
+from firedrake.pyplot import plot, tripcolor, triplot
+from firedrake import *
+from firedrake.__future__ import interpolate
+from firedrake.exceptions import ConvergenceError
 
 from firedrake_difFEM.solve_poisson import poisson2d_fgauss_b0, poisson2d_fmultigauss_bcs, poisson1d_fmultigauss_bcs, plot_solutions
-from firedrake_difFEM.difFEM_2d import soln
-from utils_main import vizualise_grid_with_edges
-from utils_data import reshape_grid_to_fd_tensor, map_firedrake_to_cannonical_ordering_2d, reshape_fd_tensor_to_grid
-from firedrake_difFEM.difFEM_1d import Fixed_Mesh_1D, backFEM_1D, torch_FEM_1D, u_true_exact_1d
-from firedrake_difFEM.difFEM_2d import torch_FEM_2D, u_true_exact_2d
+from utils_main import vizualise_grid_with_edges, inner_progress
 
 from data_mixed_loader import Mixed_DataLoader
+from pde_solvers import get_solve_firedrake_class
 
-def evaluate_error(uu, u_true):
-    ''' Calculate L1 and L2 error norms of the approximation against the exact solution '''
 
-    L2_error = sqrt(assemble(inner(uu - u_true, uu - u_true) * dx))
-    L1_error = assemble(abs(uu - u_true) * dx)
+def eval_firedrake_fct(uu, u_true, p=2):
+    # Compute and return L1 / L2 error
+    if p==1:
+        Lp = assemble(sqrt(inner(uu - u_true, uu - u_true)) * dx)
+    elif p==2:
+        Lp = assemble(inner(uu - u_true, uu - u_true) * dx)
+    return Lp
 
-    return L1_error, L2_error
+
 
 def evaluate_error_np(uu, u_true, x):
     # Calculate the lengths of each interval
@@ -80,7 +86,7 @@ def update_mesh_coords(mesh, new_coords):
     if dim == 1 or new_coords.shape[1] == 1:
         new_coords = new_coords.squeeze()
         new_coordinates.dat.data[:] = new_coords
-    elif dim == 2:
+    elif dim == 2 or dim == 3:
         new_coordinates.dat.data[:] = new_coords
     mesh.coordinates.assign(new_coordinates)
 
@@ -103,140 +109,323 @@ def firedrake_call_fct_handler(fd_fct, point_list):
     return fd_fct_eval, non_idxs
 
 
-def evaluate_model_fine(model, dataset, opt, fine_eval=True):
-    #evaluation on a finer mesh using opt['eval_quad_points']
+def inner_progress(curr, total, width=10, bars=u'▉▊▋▌▍▎▏ '[::-1],
+               full='█', empty=' '):
+    """Create a progress bar string for inner loops to use in tqdm postfix.
+    
+    Args:
+        curr: Current step
+        total: Total steps
+        width: Width of the progress bar
+        bars: Characters to use for fractional progress
+        full: Character for completed sections
+        empty: Character for empty sections
+    
+    Returns:
+        Formatted progress bar string
+    """
+    p = curr / total 
+    nfull = int(p * width)
+    return "{:>3.0%} |{}{}{}| {:>2}/{}".format(
+        p, 
+        full * nfull,
+        bars[int(len(bars) * ((p * width) % 1))] if nfull < width else '',
+        empty * (width - nfull - 1),
+        curr, total
+    )
+
+def solve_with_retry(pde_solver, max_attempts=3, verbose=False, progress_callback=None):
+    """Attempt to solve with multiple retry strategies if initial solve fails.
+    
+    Args:
+        pde_solver: The PDE solver instance
+        max_attempts: Maximum number of solution attempts
+        verbose: If True, print detailed solver information
+    """
+    # Only print solver configuration in verbose mode
+    if verbose:
+        try:
+            print(f"\nInitial solver configuration:")
+            print(f"Solver type: {type(pde_solver)}")
+            if hasattr(pde_solver, 'solver'):
+                snes = pde_solver.solver.snes
+                print(f"SNES type: {snes.getType()}")
+                try:
+                    print(f"Line search type: {snes.getLineSearch().getType()}")
+                except:
+                    pass  # Older PETSc versions might not have this
+                try:
+                    rtol, atol, stol, maxit = snes.getTolerances()
+                    print(f"SNES tolerances: rtol={rtol}, atol={atol}, max_it={maxit}")
+                except:
+                    pass
+        except Exception as e:
+            print(f"Could not print solver configuration: {e}")
+    
+    attempts = 0
+    while attempts < max_attempts:
+        try:
+            result = pde_solver.solve()
+            # Print solution stats only in verbose mode
+            if verbose:
+                try:
+                    print(f"Solution min/max: {result.dat.data.min():.3e}/{result.dat.data.max():.3e}")
+                except:
+                    pass
+            return result
+        except ConvergenceError as e:
+            attempts += 1
+            if verbose:
+                print(f"\nSolver failure details:")
+                print(f"Error message: {str(e)}")
+                try:
+                    # Try to get more detailed convergence info
+                    if hasattr(pde_solver, 'solver'):
+                        snes = pde_solver.solver.snes
+                        print(f"SNES reason: {snes.getConvergedReason()}")
+                        print(f"Number of iterations: {snes.getIterationNumber()}")
+                        print(f"Function norm: {snes.getFunctionNorm()}")
+                        print(f"Current tolerances: {snes.getTolerances()}")
+                except Exception as debug_e:
+                    print(f"Could not get detailed convergence info: {debug_e}")
+            
+            if attempts == max_attempts:
+                if verbose:
+                    print(f"Failed to converge after {max_attempts} attempts")
+                raise e
+            
+            # Modify solver parameters for next attempt
+            if "DIVERGED_FNORM_NAN" in str(e):
+                if attempts == 1:
+                    if verbose:
+                        print("First retry: Using basic line search...")
+                    try:
+                        snes = pde_solver.solver.snes
+                        snes.setLineSearchType('basic')
+                        # Try more conservative tolerances
+                        rtol, atol, stol, maxit = snes.getTolerances()
+                        snes.setTolerances(rtol=rtol*10, atol=atol*10, max_it=maxit*2)
+                        snes.setFromOptions()
+                    except AttributeError:
+                        if verbose:
+                            print("Warning: Could not modify SNES parameters")
+                elif attempts == 2:
+                    if verbose:
+                        print("Second retry: Using more robust solver configuration...")
+                    try:
+                        snes = pde_solver.solver.snes
+                        snes.setType('newtontr')  # Try trust region instead
+                        snes.setLineSearchType('l2')
+                        # Even more conservative tolerances
+                        rtol, atol, stol, maxit = snes.getTolerances()
+                        snes.setTolerances(rtol=rtol*100, atol=atol*100, max_it=maxit*4)
+                        snes.setFromOptions()
+                    except AttributeError:
+                        if verbose:
+                            print("Warning: Could not modify SNES parameters")
+            
+            if verbose:
+                print(f"Solve failed, attempt {attempts}/{max_attempts}. Retrying with modified parameters...")
+
+    return result
+
+def evaluate_model(model, dataset, opt):
     dim = len(dataset.opt['mesh_dims'])
 
-    # #set eval_fct
-    if dim == 1:
-        eval_fct = poisson1d_fmultigauss_bcs
-        if fine_eval:
-            eval_mesh = UnitIntervalMesh(opt['eval_quad_points'] - 1, name="eval_mesh")
-    elif dim == 2:
-        eval_fct = poisson2d_fmultigauss_bcs
-        if fine_eval:
-            eval_mesh = UnitSquareMesh(opt['eval_quad_points'] - 1, opt['eval_quad_points'] - 1, name="eval_mesh")
-            x_values = np.linspace(0, 1, opt['eval_quad_points'])
-            y_values = np.linspace(0, 1, opt['eval_quad_points'])
-            X, Y = np.meshgrid(x_values, y_values)
-            eval_grid = [X, Y]
-            eval_vec = np.reshape(np.array([X, Y]), [2, opt['eval_quad_points']**2])
+    SolverCoarse = get_solve_firedrake_class(opt)
 
-    if opt['data_type'] == 'randg_mix':# and opt['batch_size'] > 1:
+    if opt['data_type'] == 'randg_mix':
         exclude_keys = ['boundary_nodes_dict', 'mapping_dict', 'node_boundary_map', 'eval_errors', 'pde_params']
         follow_batch = []
         loader = Mixed_DataLoader(dataset, batch_size=1, shuffle=False, exclude_keys=exclude_keys, follow_batch=follow_batch)
     else:
         loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-    results, times = [], []
-    for i, data in enumerate(loader):
-        if opt['overfit_num']:
-            if i not in opt['overfit_num']:
-                continue  # skip to next batch
-            else:
-                print(f"Overfitting on batch {i} of {opt['overfit_num']}")
+    results, times, metrics = [], [], []
+    successful_evals = 0
+
+    eval_bar = tqdm(enumerate(loader), desc="Evaluating", total=len(loader), position=0, leave=True,
+                   bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')
+    for i, data in eval_bar:
+
+        if 'test_idxs' in opt and opt['test_idxs']:
+            idx = dataset.data_idx_dict[i] if opt['data_type'] == "RBF" else i
+            if idx not in opt['test_idxs']:
+                continue
 
         if opt['data_type'] == 'randg_mix':
-            mesh = data.mesh[0]
-            deformed_mesh = data.mesh_deformed[0]
-            c_list = data.batch_dict[0]['pde_params']['centers']
-            s_list = data.batch_dict[0]['pde_params']['scales']
-            mapping_tensor = data.mapping_tensor
+            mesh = data.coarse_mesh[0]
+            pde_params = data.batch_dict[0]['pde_params']
         else:
-            mesh = dataset.mesh
-            deformed_mesh = dataset.mesh_deformed
-            c_list = data.pde_params['centers'][0]
-            s_list = data.pde_params['scales'][0]
-            mapping_tensor = dataset.mapping_tensor
+            mesh = dataset.coarse_mesh
+            pde_params = data.pde_params
 
+        # to catch varying size data
         if dim == 1:
             num_meshpoints = dataset.opt['mesh_dims'][0]
         elif dim == 2:
-            num_meshpoints = int(np.sqrt(data.x_phys.shape[0]))
-            if not fine_eval:
-                eval_mesh = mesh
-                x_values = np.linspace(0, 1, num_meshpoints)
-                y_values = np.linspace(0, 1, num_meshpoints)
-                X, Y = np.meshgrid(x_values, y_values)
-                eval_grid = [X, Y]
-                eval_vec = np.reshape(np.array([X, Y]), [2, num_meshpoints**2])
+            num_meshpoints = dataset.opt['mesh_dims'][0]
+        elif dim == 3:
+            num_meshpoints = int(np.sqrt(data.x_ma.shape[0]))
 
         data.idx = i
 
-        if fine_eval:
-            try: #from data_all.py and data_all_fine.py do this
-                if opt['data_type'] == 'randg_mix':
-                    eval_errors = data.batch_dict[0]['eval_errors']
-                    L1_grid, L2_grid = eval_errors['L1_grid'].item(), eval_errors['L2_grid'].item()
-                    L1_MA, L2_MA = eval_errors['L1_MA'].item(), eval_errors['L2_MA'].item()
-                else:
-                    L1_grid, L2_grid = data.eval_errors['L1_grid'].item(), data.eval_errors['L2_grid'].item()
-                    L1_MA, L2_MA = data.eval_errors['L1_MA'].item(), data.eval_errors['L2_MA'].item()
-                MA_time = data.build_time.item()
-            except:
-                print("Pre process eval data doesn't exists, calculating...")
-                if dim == 1:
-                    fcts_on_grids_dict, eval_errors_dict = eval_grid_MMPDE_MA(data, mesh, deformed_mesh, eval_mesh, eval_fct, dim, num_meshpoints, c_list, s_list, opt)
-                elif dim == 2:
-                    fcts_on_grids_dict, eval_errors_dict = eval_grid_MMPDE_MA(data, mesh, deformed_mesh, eval_mesh, eval_fct, dim, num_meshpoints, c_list, s_list, opt, eval_vec, X, Y)
-        else:
-            if dim == 1:
-                fcts_on_grids_dict, eval_errors_dict = eval_grid_MMPDE_MA(data, mesh, deformed_mesh, eval_mesh, eval_fct, dim, num_meshpoints, c_list, s_list, opt)
-            elif dim == 2:
-                fcts_on_grids_dict, eval_errors_dict = eval_grid_MMPDE_MA(data, mesh, deformed_mesh, eval_mesh, eval_fct, dim, num_meshpoints, c_list, s_list, opt, eval_vec, X, Y)
+        # Reset mesh coordinates at start of each evaluation
+        if opt['mesh_file_type'] == 'bin':
+            dataset.reset_mesh_coordinates()
 
-            L1_grid, L2_grid = eval_errors_dict['L1_grid'], eval_errors_dict['L2_grid']
-            L1_MA, L2_MA = eval_errors_dict['L1_MA'], eval_errors_dict['L2_MA']
+        #1) GRID
+        update_mesh_coords(mesh, data.x_comp)
+
+        PDESolver_coarse = SolverCoarse(opt, dim, mesh)
+        PDESolver_coarse.update_solver(pde_params)
+        try:
+            # Define a callback to update the progress bar
+            def solve_progress(step, total):
+                eval_bar.set_postfix_str(f"Solve: {inner_progress(step, total)}")
+                
+            if opt['pde_type'] in ['Poisson', 'Burgers']:
+                u_grid = solve_with_retry(PDESolver_coarse, verbose=False, progress_callback=solve_progress)
+            elif opt['pde_type'] == 'NavierStokes':
+                u_grid, p_grid = solve_with_retry(PDESolver_coarse, verbose=False, progress_callback=solve_progress)
+            successful_evals += 1
+        except Exception as e:
+            print(f"Solve failed completely for idx {i}, skipping...")
+            print(f"Error: {str(e)}")
+            # Reset mesh coordinates after failed solve
+            if opt['mesh_file_type'] == 'bin':
+                dataset.reset_mesh_coordinates()
+            continue
+
+        # TODO: Make this NavierStokes compatible
+        if opt['pde_type'] in ['Poisson', 'Burgers']:
+            V_HO = PDESolver_coarse.get_pde_function_space(opt['HO_degree'])
+        elif opt['pde_type'] == 'NavierStokes':
+            V_HO, Q_HO = PDESolver_coarse.get_pde_function_space(opt['HO_degree'])
+        # Project reference solution onto HO space
+        u_grid_ref = assemble(interpolate(data.uu_ref[0], V_HO))
+
+        if opt['pde_type'] == 'NavierStokes':
+            p_grid_ref = assemble(interpolate(data.pp_ref[0], Q_HO))
+
+        L1_grid = eval_firedrake_fct(u_grid, u_grid_ref, p=1)
+        L2_grid = np.sqrt(eval_firedrake_fct(u_grid, u_grid_ref, p=2))
+
+        if opt['pde_type'] == 'NavierStokes':
+            L1_grid = L1_grid + eval_firedrake_fct(p_grid, p_grid_ref, p=1)
+            L2_grid = np.sqrt(L2_grid**2 + eval_firedrake_fct(p_grid, p_grid_ref, p=2))
+
+        #2) MA: Update mesh coordinates and repeat process
+        update_mesh_coords(mesh, data.x_ma)
+        if opt['pde_type'] in ['Poisson', 'Burgers']:
+            PDESolver_coarse = SolverCoarse(opt, dim, mesh)
+            PDESolver_coarse.update_solver(pde_params)
+            try:
+                u_MA = solve_with_retry(PDESolver_coarse, verbose=False)
+                successful_evals += 1
+            except Exception as e:
+                print(f"Solve failed completely for idx {i}, skipping...")
+                print(f"Error: {str(e)}")
+                # Reset mesh coordinates after failed solve
+                if opt['mesh_file_type'] == 'bin':
+                    dataset.reset_mesh_coordinates()
+                continue
+
+            V_HO = PDESolver_coarse.get_pde_function_space(opt['HO_degree'])
+            try:
+                # Project reference solution onto HO space
+                u_MA_ref = assemble(interpolate(data.uu_ref[0], V_HO))
+                # Compute L1 and L2 errors
+                L1_MA = eval_firedrake_fct(u_MA, u_MA_ref, p=1)
+                L2_MA = np.sqrt(eval_firedrake_fct(u_MA, u_MA_ref, p=2))
+            except:
+                L1_MA=L1_grid
+                L2_MA=L2_grid
+
+            MA_time = data.build_time.item()
+            L1_reduction_MA = calculate_error_reduction(L1_grid, L1_MA)
+            L2_reduction_MA = calculate_error_reduction(L2_grid, L2_MA)
+
+        elif opt['pde_type'] == 'NavierStokes':
+            L1_MA = 0.0
+            L2_MA = 0.0
+            MA_time = 0.0
+            L1_reduction_MA = 0.0
+            L2_reduction_MA = 0.0
+
 
         #3) Get the model deformed mesh from trained model
-        start_MLmodel = time.time()
+        update_mesh_coords(mesh, data.x_comp)
+        # start_MLmodel = time.time()
         if opt['loss_type'] == 'mesh_loss':
-            MLmodel_coords = model(data).to('cpu').detach().numpy()
+            MLmodel_coords = model(data).to('cpu').detach()
+        elif opt['loss_type'] == 'pde_loss_firedrake':
+            MLmodel_coords = model(data).to('cpu').detach()
         elif opt['loss_type'] == 'modular':
-            MLmodel_coords = model(data).to('cpu').detach().numpy()
-        elif opt['loss_type'] == 'pde_loss':
-            coeffs, MLmodel_coords, sol = model(data)
-            MLmodel_coords = MLmodel_coords.to('cpu').detach().numpy()
-        MLmodel_time = model.end_MLmodel - start_MLmodel
+            MLmodel_coords = model(data).to('cpu').detach()
+        elif opt['loss_type'] == 'UM2N_loss':
+            MLmodel_coords = model(data).to('cpu').detach()
+        elif opt['loss_type'] == 'mixed_UM2N_pde_loss_firedrake':
+            MLmodel_coords = model(data).to('cpu').detach()
+        elif opt['loss_type'] == 'pde_loss_regularised':
+            MLmodel_coords = model(data).to('cpu').detach()
+
+        MLmodel_time = model.end_MLmodel - model.start_MLmodel
 
         MLmodel_coords = MLmodel_coords.squeeze() if dim == 1 else MLmodel_coords
+
+        # Update mesh coordinates and repeat process
         update_mesh_coords(mesh, MLmodel_coords)
 
-        if not fine_eval:
-            eval_mesh = mesh
-            # eval_grid = MLmodel_coords
-            #make eval grid in the style of mesh grid using MLmodel_coords using repeat
-            if dim == 2:
-                mesh_dims = [num_meshpoints, num_meshpoints]
-                torch_MLmodel_coords = torch.tensor(MLmodel_coords)
-                eval_grid0 = reshape_fd_tensor_to_grid(torch_MLmodel_coords[:, 0], mapping_tensor, mesh_dims, batch_size=1, dim=2).to('cpu').detach().numpy()
-                eval_grid1 = reshape_fd_tensor_to_grid(torch_MLmodel_coords[:, 1], mapping_tensor, mesh_dims, batch_size=1, dim=2).to('cpu').detach().numpy()
-                eval_grid = np.concatenate((eval_grid0, eval_grid1), axis=0)
+        PDESolver_coarse = SolverCoarse(opt, dim, mesh)
+        PDESolver_coarse.update_solver(pde_params)
+        try:
+            if opt['pde_type'] in ['Poisson', 'Burgers']:
+                u_MLmodel = solve_with_retry(PDESolver_coarse, verbose=False)
 
-        # solve PDE on either fine grid with firedrake or analytically
-        if opt['evaler'] == 'fd_*':
-            uu_MLmodel_fine, u_true_MLmodel_fine, f_MLmodel_fine = eval_fct(eval_mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-            u_MLmodel_eval_ref = uu_MLmodel_fine
-        elif opt['evaler'] == 'analytical':
-            if dim == 1:
-                u_MLmodel_eval_ref = u_true_exact_1d(torch.from_numpy(eval_mesh.coordinates.dat.data_ro), c_list, s_list).to('cpu').detach().numpy()
-            if dim == 2:
-                u_MLmodel_eval_ref = u_true_exact_2d(torch.tensor(eval_grid), c_list, s_list).to('cpu').detach().numpy()
+            elif opt['pde_type'] == 'NavierStokes':
+                u_MLmodel, p_MLmodel = solve_with_retry(PDESolver_coarse, verbose=False)
+            successful_evals += 1
+        except Exception as e:
+            print(f"Solve failed completely for idx {i}, skipping...")
+            print(f"Error: {str(e)}")
+            # Reset mesh coordinates after failed solve
+            if opt['mesh_file_type'] == 'bin':
+                dataset.reset_mesh_coordinates()
+            continue
 
-        #evaluate error
-        if dim == 1:
-            uu_MLmodel, u_true_MLmodel, f_MLmodel, L1_MLmodel, L2_MLmodel, L1_MLmodel_fd, L2_MLmodel_fd \
-                    = solve_eval_1data(mesh, eval_mesh, u_MLmodel_eval_ref, eval_fct, dim, num_meshpoints, c_list, s_list, opt, fine_eval=fine_eval)
-        elif dim == 2:
-            uu_MLmodel, u_true_MLmodel, f_MLmodel, L1_MLmodel, L2_MLmodel, L1_MLmodel_fd, L2_MLmodel_fd \
-                    = solve_eval_1data(mesh, eval_mesh, u_MLmodel_eval_ref, eval_fct, dim, num_meshpoints, c_list, s_list, opt, X, Y, fine_eval=fine_eval)
+        if opt['pde_type'] in ['Poisson', 'Burgers']:
+            V_HO = PDESolver_coarse.get_pde_function_space(opt['HO_degree'])
+        elif opt['pde_type'] == 'NavierStokes':
+            V_HO, Q_HO = PDESolver_coarse.get_pde_function_space(opt['HO_degree'])
+
+        try:
+            # Project reference solution onto HO space
+            u_MLmodel_ref = assemble(interpolate(data.uu_ref[0], V_HO))
+
+            if opt['pde_type'] == 'NavierStokes':
+                p_MLmodel_ref = assemble(interpolate(data.pp_ref[0], Q_HO))
+
+            L1_MLmodel = eval_firedrake_fct(u_MLmodel, u_MLmodel_ref, p=1)
+            L2_MLmodel = np.sqrt(eval_firedrake_fct(u_MLmodel, u_MLmodel_ref, p=2))
+
+            if opt['pde_type'] == 'NavierStokes':
+                L1_MLmodel = L1_MLmodel + eval_firedrake_fct(p_MLmodel, p_MLmodel_ref, p=1)
+                L2_MLmodel = np.sqrt(L2_MLmodel**2 + eval_firedrake_fct(p_MLmodel, p_MLmodel_ref, p=2))
+        except:
+            L1_MLmodel = L1_grid
+            L2_MLmodel = L2_grid
 
         # Calculate error reduction ratios
-        L1_reduction_MA = calculate_error_reduction(L1_grid, L1_MA)
-        L2_reduction_MA = calculate_error_reduction(L2_grid, L2_MA)
         L1_reduction_MLmodel = calculate_error_reduction(L1_grid, L1_MLmodel)
         L2_reduction_MLmodel = calculate_error_reduction(L2_grid, L2_MLmodel)
+
+        # Calculate mesh quality metrics for all meshes
+        quality_metrics = {
+            **calculate_mesh_quality_metrics(mesh, data.x_comp, 'grid'),
+            **calculate_mesh_quality_metrics(mesh, data.x_ma, 'MA'),
+            **calculate_mesh_quality_metrics(mesh, MLmodel_coords, 'MLmodel')
+        }
 
         results.append({
             'L1_grid': L1_grid,
@@ -254,588 +443,119 @@ def evaluate_model_fine(model, dataset, opt, fine_eval=True):
         times.append({
             'MA_time': MA_time,
             'MLmodel_time': MLmodel_time})
+        
+        metrics.append(quality_metrics)
 
+        # Reset mesh coordinates after successful evaluation
+        if opt['mesh_file_type'] == 'bin':
+            dataset.reset_mesh_coordinates()
+
+    if successful_evals == 0:
+        print("Warning: No successful evaluations completed")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     df = pd.DataFrame(results)
     df_time = pd.DataFrame(times)
+    df_metrics = pd.DataFrame(metrics)
 
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
     print(df.describe())
     print(df_time.describe())
+    print(df_metrics.describe())
 
-    return df, df_time
+    return df, df_time, df_metrics
 
 
-def eval_grid_MMPDE_MA(data, x_comp_mesh, x_phys_mesh, eval_mesh, eval_fct, dim, num_meshpoints, c_list, s_list, opt, eval_vec=None, X=None, Y=None, fine_eval=True):
+def firedrake_mesh_to_pyvista(mesh):
 
-    # 1) Get the non-deformed mesh solution
-    if fine_eval:
-        update_mesh_coords(x_comp_mesh, data.x_comp)
+    # Get node coordinates and cell connectivity
+    coords = mesh.coordinates.dat.data_ro.copy()
+    cell_nodes = mesh.coordinates.cell_node_map().values
+    num_cells = cell_nodes.shape[0]
+    num_nodes_per_cell = cell_nodes.shape[1]  # Should be 3 for triangles
+
+    # For PyVista, create the 'cells' array in the format:
+    # [num_nodes_per_cell, node1, node2, node3, num_nodes_per_cell, node1, ...]
+    cells = np.hstack((
+        np.full((num_cells, 1), num_nodes_per_cell, dtype=np.int64),
+        cell_nodes
+    )).flatten()
+
+    # Define cell types: 5 for triangles
+    cell_types = np.full(num_cells, pv.CellType.TRIANGLE, dtype=np.uint8)
+
+    # **Convert 2D coords to 3D by adding a zero z-component**
+    num_points = coords.shape[0]
+    coords_3d = np.zeros((num_points, 3))
+    coords_3d[:, :2] = coords  # Set x and y, leave z as zero
+
+    # Create the UnstructuredGrid
+    pv_mesh = pv.UnstructuredGrid(cells, cell_types, coords_3d)
+    return pv_mesh
+
+
+def firedrake_mesh_to_pyvista3d(mesh):
+    # Get node coordinates and cell connectivity
+    coords = mesh.coordinates.dat.data_ro.copy()
+    cell_nodes = mesh.coordinates.cell_node_map().values
+    num_cells = cell_nodes.shape[0]
+    num_nodes_per_cell = cell_nodes.shape[1]  # 3 for triangles, 4 for tetrahedra
+
+    # Detect mesh type
+    if num_nodes_per_cell == 3:
+        cell_type = pv.CellType.TRIANGLE  # 2D
+    elif num_nodes_per_cell == 4:
+        cell_type = pv.CellType.TETRA  # 3D
     else:
-        update_mesh_coords(eval_mesh, data.x_comp)
+        raise ValueError(f"Unsupported cell type with {num_nodes_per_cell} nodes per element.")
 
-    if opt['evaler'] == 'fd_*':
-        #here u_grid_eval_ref is a firedrake function
-        uu_grid_fine, u_true_grid_fine, _, _ = eval_fct(eval_mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-        u_grid_eval_ref = uu_grid_fine
-    elif opt['evaler'] == 'analytical':
-        #here u_grid_eval_ref is actually a canon vec of the true solution on the fine mesh
-        if dim == 1:
-            u_grid_eval_ref = u_true_exact_1d(torch.from_numpy(eval_mesh.coordinates.dat.data_ro), c_list, s_list).to('cpu').detach().numpy()
-        elif dim == 2:
-            u_grid_eval_ref = u_true_exact_2d(torch.tensor(eval_vec), c_list, s_list).to('cpu').detach().numpy()
+    # For PyVista, create the 'cells' array:
+    # [num_nodes_per_cell, node1, node2, node3, ...]
+    cells = np.hstack((
+        np.full((num_cells, 1), num_nodes_per_cell, dtype=np.int64),
+        cell_nodes
+    )).flatten()
 
-    if dim == 1:
-        uu_grid, u_true_grid, f_grid, L1_grid, L2_grid, L1_grid_fd, L2_grid_fd \
-                    = solve_eval_1data(x_comp_mesh, eval_mesh, u_grid_eval_ref, eval_fct, dim, num_meshpoints, c_list, s_list, opt, fine_eval=fine_eval)
-    elif dim == 2:
-        uu_grid, u_true_grid, f_grid, L1_grid, L2_grid, L1_grid_fd, L2_grid_fd \
-                    = solve_eval_1data(x_comp_mesh, eval_mesh, u_grid_eval_ref, eval_fct, dim, num_meshpoints, c_list, s_list, opt, X, Y, fine_eval=fine_eval)
+    # Set correct cell types
+    cell_types = np.full(num_cells, cell_type, dtype=np.uint8)
 
-    # 2) Get the MA-MMPDE5 deformed mesh solution
-    if fine_eval:
-        update_mesh_coords(x_phys_mesh, data.x_phys)
-        if dim == 1:
-            eval_grid = data.x_phys
-        elif dim == 2:
-            eval_grid = np.array([X, Y])
-
+    # Ensure coordinates are 3D
+    num_points = coords.shape[0]
+    if coords.shape[1] == 2:  # Convert 2D to 3D if necessary
+        coords_3d = np.zeros((num_points, 3))
+        coords_3d[:, :2] = coords
     else:
-        update_mesh_coords(eval_mesh, data.x_phys)
-        if dim == 1:
-            eval_grid = data.x_phys
-        elif dim == 2:
-            mapping_tensor = data.mapping_tensor
-            mesh_dims = [num_meshpoints, num_meshpoints]
-            x_phys_coords = torch.tensor(data.x_phys)
-            eval_grid0 = reshape_fd_tensor_to_grid(x_phys_coords[:, 0], mapping_tensor, mesh_dims, batch_size=1, dim=2).to('cpu').detach().numpy()
-            eval_grid1 = reshape_fd_tensor_to_grid(x_phys_coords[:, 1], mapping_tensor, mesh_dims, batch_size=1, dim=2).to('cpu').detach().numpy()
-            eval_grid = np.array([eval_grid0, eval_grid1])
+        coords_3d = coords  # Already 3D
 
-    if opt['evaler'] == 'fd_*':
-        u_MA_eval_ref = uu_grid_fine
-
-    elif opt['evaler'] == 'analytical':
-        if dim == 1:
-            u_MA_eval_ref = u_true_exact_1d(torch.from_numpy(eval_mesh.coordinates.dat.data_ro), c_list, s_list).to('cpu').detach().numpy()
-        if dim == 2:
-            u_MA_eval_ref = u_true_exact_2d(torch.tensor(eval_grid), c_list, s_list).to('cpu').detach().numpy()
-
-    try:
-        if dim == 1:
-            uu_ma, u_true_ma, f_ma, L1_ma, L2_ma, L1_ma_fd, L2_ma_fd \
-                        = solve_eval_1data(x_phys_mesh, eval_mesh, u_MA_eval_ref, eval_fct, dim, num_meshpoints, c_list, s_list, opt, fine_eval=fine_eval)
-        elif dim == 2:
-            uu_ma, u_true_ma, f_ma, L1_ma, L2_ma, L1_ma_fd, L2_ma_fd \
-                        = solve_eval_1data(x_phys_mesh, eval_mesh, u_MA_eval_ref, eval_fct, dim, num_meshpoints, c_list, s_list, opt, X, Y, fine_eval=fine_eval)
-    except:
-        print("Error in solving MA-MMPDE5")
-        uu_ma, u_true_ma, f_ma, L1_ma, L2_ma, L1_ma_fd, L2_ma_fd = 0., 0., 0., 0., 0., 0., 0.
-
-    fct_on_grids_dict = {
-        'uu_grid': uu_grid,
-        'u_true_grid': u_true_grid,
-        'f_grid': f_grid,
-        'uu_ma': uu_ma,
-        'u_true_ma': u_true_ma,
-        'f_ma': f_ma}
-
-    eval_errors_dict = {
-        'L1_grid': L1_grid,
-        'L2_grid': L2_grid,
-        'L1_MA': L1_ma,
-        'L2_MA': L2_ma,
-        'L1_grid_fd': L1_grid_fd,
-        'L2_grid_fd': L2_grid_fd,
-        'L1_MA_fd': L1_ma_fd,
-        'L2_MA_fd': L2_ma_fd
-                    }
-
-    return fct_on_grids_dict, eval_errors_dict
+    # Create the UnstructuredGrid
+    pv_mesh = pv.UnstructuredGrid(cells, cell_types, coords_3d)
+    return pv_mesh
 
 
-def solve_eval_1data(mesh, eval_mesh, u_eval_ref, eval_fct, dim, num_meshpoints, c_list, s_list, opt, X=None, Y=None, fine_eval=True):
-    # Interpolate solution on "any" coarse mesh onto the (fine) eval_mesh and evaluate against "u_eval_ref" to give L1 L2 errors
-
-    #given a mesh get uu/u_true/f at mesh points using eval_fct
-    if dim == 1:
-        uu_coarse, u_true_coarse, f_coarse = eval_fct(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-    elif dim == 2:
-        uu_coarse, u_true_coarse, f_coarse = eval_fct(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-
-    #project onto fine eval_mesh and calculate L1 and L2 errors
-    if opt['solver'] == 'firedrake':
-        L1_fd, L2_fd = evaluate_error(uu_coarse, u_true_coarse)
-        #evaluate the firedrake function on the firedrake fine mesh coords
-        uu_coarse2fine, non_idxs = firedrake_call_fct_handler(fd_fct=uu_coarse, point_list=eval_mesh.coordinates.dat.data_ro.tolist())
-
-        if dim == 1:
-            u_eval_ref[non_idxs] = 0.
-            L1, L2 = evaluate_error_np(u_eval_ref, uu_coarse2fine, eval_mesh.coordinates.dat.data_ro)
-        elif dim == 2:
-            if opt['evaler'] == 'fd_*':
-                raise NotImplementedError
-                # u_eval_ref is firedrake function on eval mesh
-                # uu_coarse2fine is a np array in firedrake ordering
-                # needed to reorder uu_coarse2fine from fd to grid which needs mapping_tensor
-                # uu_coarse2fine_grid = reshape_fd_tensor_to_grid(uu_coarse2fine, mapping_tensor, mesh_dims, batch_size=1, dim=2).to('cpu').detach().numpy()
-            elif opt['evaler'] == 'analytical': #get canon true solution
-                # u_eval_ref is a conan ordered fine grid
-                #but uu_coarse2fine is in firedrake ordering
-                raise NotImplementedError
-                # L1, L2 = evaluate_error_np_2d(u_eval_ref, uu_coarse2fine, np.array([X, Y]))
-        # return uu_coarse, u_true_coarse, f_coarse, L1, L2, L1_fd, L2_fd
-
-    elif opt['solver'] == 'torch_FEM':
-        c_list = [torch.from_numpy(c_0) for c_0 in c_list]
-        s_list = [torch.from_numpy(s_0) for s_0 in s_list]
-        mesh_points = torch.from_numpy(mesh.coordinates.dat.data_ro).float()
-        if dim == 1:
-            quad_points = torch.from_numpy(eval_mesh.coordinates.dat.data_ro).float()
-            _, _, uu_coarse2fine, _, _ = torch_FEM_1D(opt, mesh_points, quad_points, num_meshpoints, c_list, s_list)
-            L1, L2 = evaluate_error_np(uu_coarse2fine.to('cpu').detach().numpy(), u_eval_ref, eval_mesh.coordinates.dat.data_ro)
-        elif dim == 2:
-            if opt['evaler'] == 'fd_*':
-                raise NotImplementedError
-                # u_eval_ref is firedrake function on eval mesh
-            eval_grid_np = np.array([X, Y])
-            eval_grid = torch.tensor(eval_grid_np)
-            _, _, uu_coarse2fine = torch_FEM_2D(opt, mesh, mesh_points, eval_grid, num_meshpoints, c_list, s_list)
-            L1, L2 = evaluate_error_np_2d(uu_coarse2fine.to('cpu').detach().numpy(), u_eval_ref, eval_grid_np)
-
-    #todo could include analytical solution here as well
-
-    return uu_coarse, u_true_coarse, f_coarse, L1, L2, None, None
-
-
-def linear_interpolate_FD(coarse_function, fine_mesh, dim):
+def calculate_mesh_quality_metrics(mesh, mesh_coords, mesh_name):
+    """Calculate quality metrics for a given mesh configuration.
+    Args:
+        mesh: Firedrake mesh object
+        mesh_coords: Coordinates for the mesh
+        mesh_name: Name prefix for the metrics ('grid', 'MA', or 'MLmodel')
+    
+    Returns:
+        dict: Dictionary of mesh quality metrics with prefixed names
     """
-    Interpolate 1D data from a coarse mesh to a fine mesh.
-    :param coarse_values: The values on the coarse mesh (1D numpy array).
-    :param fine_mesh_size: The number of points in the fine mesh.
-    :return: Interpolated values on the fine mesh (1D numpy array).
-    """
-    if dim == 1:
-        coarse_values = coarse_function.vector().get_local()
-        coarse_mesh_size = len(coarse_values)
-        fine_mesh_size = fine_mesh.coordinates.dat.shape[0]
-        x_coarse = np.linspace(0, 1, coarse_mesh_size)
-        x_fine = np.linspace(0, 1, fine_mesh_size)
-        fine_values = np.interp(x_fine, x_coarse, coarse_values)
-        # fine_mesh = UnitIntervalMesh(fine_mesh_size)
-        fine_function = Function(FunctionSpace(fine_mesh, 'CG', 1))
-        fine_function.vector().set_local(fine_values)
-    else:
-        # Interpolate coarse solution onto the fine mesh
-        V_fine = FunctionSpace(fine_mesh, 'CG', 1)
-        fine_function = Function(V_fine)
-        fine_function.interpolate(coarse_function, allow_missing_dofs=True)
+    update_mesh_coords(mesh, mesh_coords)
+    if mesh_coords.shape[1]==2:
+        pv_mesh = firedrake_mesh_to_pyvista(mesh)
+    elif mesh_coords.shape[1]==3:
+        pv_mesh = firedrake_mesh_to_pyvista3d(mesh)
+    metrics = {}
+    
+    for metric in ['min_angle', 'aspect_ratio', 'scaled_jacobian']:
+        quality_mesh = pv_mesh.compute_cell_quality(quality_measure=metric)
+        quality_values = quality_mesh['CellQuality']
+        
+        value = float(np.max(quality_values) if metric == 'aspect_ratio' else np.min(quality_values))
+        metrics[f'{mesh_name}_{metric}'] = value
+    
+    return metrics
 
-    return fine_function
-
-def linear_interpolate_np(coarse_values, fine_mesh_size):
-    """
-    Interpolate 1D data from a coarse mesh to a fine mesh.
-    :param coarse_values: The values on the coarse mesh (1D numpy array).
-    :param fine_mesh_size: The number of points in the fine mesh.
-    :return: Interpolated values on the fine mesh (1D numpy array).
-    """
-    coarse_mesh_size = len(coarse_values)
-    x_coarse = np.linspace(0, 1, coarse_mesh_size)
-    x_fine = np.linspace(0, 1, fine_mesh_size)
-    fine_values = np.interp(x_fine, x_coarse, coarse_values)
-    return fine_values
-
-def loop_model_output(model, mesh, dataset, opt):
-    # Create a DataLoader with batch size of 1 to load one data point at a time
-    loader = DataLoader(dataset, batch_size=1)
-
-    # Create a list to store the model outputs
-    model_outputs = []
-
-    for i, data in enumerate(loader):
-        data.idx = i
-        c_list = data.pde_params['centers'][0]
-        s_list = data.pde_params['scales'][0]
-        c = c_list[0][0]
-        s = s_list[0][0]
-
-        if opt['solver'] == 'firedrake':
-            uu_grid_coarse, u_true_grid_coarse, _, _ = poisson1d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-        elif opt['solver'] == 'torch_FEM':
-            mesh_points = torch.from_numpy(mesh.coordinates.dat.data_ro).float()
-            num_meshpoints = mesh_points.shape[0]
-            #todo should be sending QUAD not mesh_points here?
-            uu_grid_coeffs, _, uu_grid_sol, BC1, BC2  = torch_FEM_1D(opt, mesh_points, mesh_points, num_meshpoints, c, s)
-            # uu_grid_coarse = uu_grid_coarse.to('cpu').detach().numpy()
-            # full_sol = torch.cat((BC1, uu_grid_coeffs, BC2), 0)
-            # uu_grid_coarse = full_sol.to('cpu').detach().numpy()
-
-        # Append the model outputs to the list
-        model_outputs.append(uu_grid_sol)
-
-    return model_outputs
-
-
-def plot_trained_dataset_1d(dataset, model, opt, model_out=None, show_mesh_evol_plots=False):
-    mesh = dataset.mesh
-    dim = len(dataset.opt['mesh_dims'])
-    num_meshpoints = dataset.opt['mesh_dims'][0] if dim == 1 else dataset.opt['mesh_dims'][0] * dataset.opt['mesh_dims'][1]
-    fine_mesh = UnitIntervalMesh(opt['eval_quad_points'] - 1, name="fine_mesh")
-
-    # Create a DataLoader with batch size of 1 to load one data point at a time
-    loader = DataLoader(dataset, batch_size=1, shuffle=False)
-
-    #figure for FEM on regular mesh
-    fig0, axs0 = plt.subplots(nrows=3, ncols=3, figsize=(15, 15))  # adjust as necessary
-    axs0 = axs0.ravel()
-    fig0.suptitle('FEM on regular mesh', fontsize=20)
-    fig0.tight_layout()
-
-    # #figure for FEM on MMPDE5 mesh
-    fig1, axs = plt.subplots(nrows=3, ncols=3, figsize=(15, 15))  # adjust as necessary
-    axs1 = axs.ravel()
-    fig1.suptitle('MMPDE5 mesh', fontsize=20)
-    fig1.tight_layout()
-
-    # figure for FEM on MLModel mesh
-    fig2, axs2 = plt.subplots(nrows=3, ncols=3, figsize=(15, 15))  # adjust as necessary
-    axs2 = axs2.ravel()
-    fig2.suptitle('FEM on MLmodel mesh', fontsize=20)
-    fig2.tight_layout()
-
-    # Loop over the dataset
-    for i, data in enumerate(loader):
-        if i == 9:
-            break
-        if opt['overfit_num']:
-            if i not in opt['overfit_num']:
-                continue  # skip to next batch
-            else:
-                print(f"Overfitting on batch {i} of {opt['overfit_num']}")
-
-        data.idx = i
-        # todo check this annoying property of PyG I believe, making indexing necessary
-        #this happens for numpy arrays in PyG datasets
-        c_list = data.pde_params['centers'][0]
-        s_list = data.pde_params['scales'][0]
-
-        #gen fine baseline true solution
-        uu_fine, u_true_fine, _ = poisson1d_fmultigauss_bcs(fine_mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-
-        # 1) plot the FEM on regular mesh
-        plot(data.uu[0], axes=axs0[i], label='uu_fem_xcomp', color='orange')
-        plot(data.u_true[0], axes=axs0[i], label='u_true_xcomp', color='green')
-        plot(uu_fine, axes=axs0[i], label='uu_fem_fine', color='lightblue')
-        plot(u_true_fine, axes=axs0[i], label='u_true_fine', color='grey')
-
-        if opt['solver'] == 'firedrake':
-            uuFD_coarse, u_true_FD_coarse, _ = poisson1d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-            plot(uuFD_coarse, axes=axs0[i], label='FD_out', color='purple')
-
-        elif opt['solver'] == 'torch_FEM':
-            c_list_torch = [torch.from_numpy(c_0) for c_0 in c_list]
-            s_list_torch = [torch.from_numpy(s_0) for s_0 in s_list]
-            mesh_points = torch.from_numpy(mesh.coordinates.dat.data_ro).float()
-            quad_points = torch.from_numpy(fine_mesh.coordinates.dat.data_ro).float()
-            UUtorchSolcoeffs, mesh_points, uutorch_coarse2fine, BC1, BC2 = torch_FEM_1D(opt, mesh_points, quad_points, num_meshpoints, c_list_torch, s_list_torch)
-            full_UUtorchsol = torch.cat((BC1, UUtorchSolcoeffs.squeeze(), BC2), 0)
-            axs0[i].plot(mesh_points, full_UUtorchsol, label='torchFEM_out', color='purple')
-
-
-        #scatter plot of data.u_true on the regular mesh
-        # axs0[i].scatter(data.x_comp, data.u_true[0].dat.data_ro, color='red', marker='x', label='u_true_x_comp')
-        #nb u_true from poisson1d_fmultigauss_bcs is the projection of the true solution onto FEM basis
-        #this solves the variational problem for the true solution and can be inaccurate at low resolution
-        #there call
-        u_true_exact_1d_vals = u_true_exact_1d(data.x_comp, c_list, s_list).to('cpu').detach().numpy()
-        axs0[i].scatter(data.x_comp, u_true_exact_1d_vals, color='red', marker='x', label='u_true_x_comp')
-
-        #extra ticks for the x axis to show the mesh points
-        extraticks = data.x_comp.tolist()
-        dash_length = 0.04
-        ymin = -0.02
-        dashcol = 'black'
-        dashwid = 2.
-        for tick in extraticks:
-            axs0[i].plot([tick, tick], [ymin, ymin + dash_length], color=dashcol, linestyle='-', linewidth=dashwid)
-        axs0[i].legend()
-
-        # 2) plot the FEM on MMPDE5/MA (target phys) mesh
-        mesh = dataset.mesh
-        x = data.x_phys
-        update_mesh_coords(mesh, x)
-
-        uu_ma, u_true_ma, _ = poisson1d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-
-        if opt['solver'] == 'firedrake':
-            uu_MA_coarse, u_true_MA_coarse, _ = poisson1d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-            plot(uu_MA_coarse, axes=axs1[i], label='FD_out', color='purple')
-
-        elif opt['solver'] == 'torch_FEM':
-            mesh_points = torch.from_numpy(mesh.coordinates.dat.data_ro).float()
-            quad_points = torch.from_numpy(fine_mesh.coordinates.dat.data_ro).float()
-            MMPDESolcoeffs, MMPDEmesh_points, uu_MA_coarse2fine, _, _ = torch_FEM_1D(opt, mesh_points, quad_points, num_meshpoints, c_list_torch, s_list_torch)
-            full_MMPDEUUsol = torch.cat((BC1, MMPDESolcoeffs.squeeze(), BC2), 0)
-            axs1[i].plot(mesh_points, full_MMPDEUUsol, label='torchFEM_out', color='purple')
-
-        # colors = tripcolor(uu_ma, axes=axs2[i])#, shading='gouraud', cmap='viridis')
-        plot(uu_ma, axes=axs1[i], label='uu_fem_ma', color='orange')
-        plot(u_true_ma, axes=axs1[i], label='u_true_ma', color='green')
-        plot(uu_fine, axes=axs1[i], label='uu_fem_fine', color='lightblue')
-        plot(u_true_fine, axes=axs1[i], label='u_true_fine', color='grey')
-
-        #scatter plot of data.u_true on the regular mesh
-        # axs1[i].scatter(data.x_comp, data.u_true[0].dat.data_ro, color='red', marker='x', label='u_true_x_comp')
-        # u_true_exact_1d = u_true_exact_1d(data.x_comp, c, s).to('cpu').detach().numpy()
-        axs1[i].scatter(data.x_comp, u_true_exact_1d_vals, color='red', marker='x', label='u_true_x_comp')
-
-        #scatter plot of data.u_true on the MA mesh
-        # axs1[i].scatter(data.x_phys, u_true_ma.dat.data_ro, color='blue', marker='x', label='u_true_MA')
-        u_true_exact_1d_xphys = u_true_exact_1d(data.x_phys, c_list, s_list).to('cpu').detach().numpy()
-        axs1[i].scatter(data.x_phys, u_true_exact_1d_xphys, color='blue', marker='x', label='u_true_MA')
-
-        #x-axis dashed for the x_phys
-        extraticks = data.x_phys.tolist()
-        # axs1[i].set_xticks(list(axs1[i].get_xticks()) + extraticks)
-        for tick in extraticks:
-            axs1[i].plot([tick, tick], [ymin, ymin + dash_length], color=dashcol, linestyle='-', linewidth=dashwid)
-        axs1[i].legend()
-
-        # 3) plot the MLmodel mesh
-        #do a forward pass of the model to get deformed mesh and collect intermediate states
-        if opt['model'] in ['backFEM_1D', 'learn_Mon_1D', 'GNN'] and show_mesh_evol_plots:
-            model.plot_evol_flag = True
-
-        if opt['loss_type'] == 'mesh_loss':
-            MLmodel_coords = model(data).to('cpu').detach().numpy()
-        elif opt['loss_type'] == 'pde_loss':
-            coeffs, MLmodel_coords, sol = model(data)
-            MLmodel_coords = MLmodel_coords.to('cpu').detach().numpy()
-
-        if opt['model'] in ['backFEM_1D', 'learn_Mon_1D', 'GNN'] and show_mesh_evol_plots:
-            model.plot_evol_flag = False
-
-        # MLmodel_coords = model(data).to('cpu').detach().numpy()
-        mesh = dataset.mesh
-        update_mesh_coords(mesh, MLmodel_coords)
-        # solve poisson
-        uu_MLmodel, u_true_MLmodel, f = poisson1d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-        # colors = tripcolor(uu_gnn, axes=axs4[i])#, shading='gouraud', cmap='viridis')
-        plot(uu_MLmodel, axes=axs2[i], label='uu_fem_MLmodel', color='orange')
-        plot(u_true_MLmodel, axes=axs2[i], label='u_true_MLmodel', color='green')
-        plot(uu_fine, axes=axs2[i], label='uu_fem_fine', color='lightblue')
-        plot(u_true_fine, axes=axs2[i], label='u_true_fine', color='grey')
-
-        #scatter plot of data.u_true on the regular mesh
-        # axs2[i].scatter(data.x_comp, data.u_true[0].dat.data_ro, color='red', marker='x', label='u_true_x_comp')
-        axs2[i].scatter(data.x_comp, u_true_exact_1d_vals, color='red', marker='x', label='u_true_x_comp')
-
-        #scatter plot of data.u_true on the updated mesh
-        # axs2[i].scatter(MLmodel_coords, u_true_MLmodel.dat.data_ro, color='blue', marker='x', label='u_true_MLmodel')
-        u_true_exact_1d_MLmodel_vals = u_true_exact_1d(MLmodel_coords.squeeze(), c_list, s_list)
-        axs2[i].scatter(MLmodel_coords, u_true_exact_1d_MLmodel_vals, color='blue', marker='x', label='u_true_MLmodel')
-
-        #x-axis dashed for the MLmodel_coords
-        extraticks = MLmodel_coords.tolist()
-        for tick in extraticks:
-            axs2[i].plot([tick, tick], [ymin, ymin + dash_length], color=dashcol, linestyle='-', linewidth=dashwid)
-        axs2[i].legend()
-
-    if opt['show_plots']:
-        plt.show()
-
-
-def plot_trained_dataset_2d(dataset, model, opt, show_mesh_evol_plots=False):
-    # Create a DataLoader with batch size of 1 to load one data point at a time
-    # loader = DataLoader(dataset, batch_size=1)
-    if opt['data_type'] == 'randg_mix':# and opt['batch_size'] > 1:
-        exclude_keys = ['boundary_nodes_dict', 'mapping_dict', 'node_boundary_map', 'eval_errors', 'pde_params']
-        follow_batch = []
-        loader = Mixed_DataLoader(dataset, batch_size=1, shuffle=False, exclude_keys=exclude_keys, follow_batch=follow_batch)
-    else:
-        loader = DataLoader(dataset, batch_size=1, shuffle=False)
-
-    #figure for FEM on regular mesh
-    fig0, axs0 = plt.subplots(nrows=5, ncols=5, figsize=(15, 15))  # adjust as necessary
-    axs0 = axs0.ravel()
-    fig0.suptitle('FEM on regular mesh', fontsize=20)
-    fig0.tight_layout()
-
-    # figure for MA mesh
-    fig1, axs = plt.subplots(nrows=5, ncols=5, figsize=(15, 15))  # adjust as necessary
-    axs1 = axs.ravel()
-    fig1.suptitle('MA mesh', fontsize=20)
-    fig1.tight_layout()
-
-    # #figure for FEM on MA mesh
-    fig2, axs2 = plt.subplots(nrows=5, ncols=5, figsize=(15, 15))  # adjust as necessary
-    axs2 = axs2.ravel()
-    fig2.suptitle('FEM on MA mesh', fontsize=20)
-    fig2.tight_layout()
-
-    # figure for MLmodel mesh
-    fig3, axs3 = plt.subplots(nrows=5, ncols=5, figsize=(15, 15))  # adjust as necessary
-    axs3 = axs3.ravel()
-    fig3.suptitle('MLmodel mesh', fontsize=20)
-    fig3.tight_layout()
-
-    # figure for FEM on MLmodel mesh
-    fig4, axs4 = plt.subplots(nrows=5, ncols=5, figsize=(15, 15))  # adjust as necessary
-    axs4 = axs4.ravel()
-    fig4.suptitle('FEM on MLmodel mesh', fontsize=20)
-    fig4.tight_layout()
-
-    # # figure for error of MA mesh versus regular mesh
-    # fig5, axs5 = plt.subplots(nrows=5, ncols=5, figsize=(15, 15))  # adjust as necessary
-    # axs5 = axs5.ravel()
-    # fig5.suptitle('Error of MA mesh versus regular mesh - CURRENTLY NOT WELL DEFINED', fontsize=20)
-    # fig5.tight_layout()
-    #
-    # # figure for error of MLmodel mesh versus regular mesh
-    # fig6, axs6 = plt.subplots(nrows=5, ncols=5, figsize=(15, 15))  # adjust as necessary
-    # axs6 = axs6.ravel()
-    # fig6.suptitle('Error of MLmodel mesh versus regular mesh - CURRENTLY NOT WELL DEFINED', fontsize=20)
-    # fig6.tight_layout()
-
-    # Loop over the dataset
-    for i, data in enumerate(loader):
-        data.idx = i
-        if i == 25:
-            break
-
-        if opt['overfit_num']:
-            if i not in opt['overfit_num']:
-                continue  # skip to next batch
-            else:
-                print(f"Overfitting on batch {i} of {opt['overfit_num']}")
-
-        # todo check this annoying property of PyG I believe, making indexing necessary
-        if opt['data_type'] == 'randg_mix':
-            mesh = data.mesh[0]
-            deformed_mesh = data.mesh_deformed[0]
-            c_list = data.batch_dict[0]['pde_params']['centers']
-            s_list = data.batch_dict[0]['pde_params']['scales']
-        else:
-            mesh = dataset.mesh
-            deformed_mesh = dataset.mesh_deformed
-            c_list = data.pde_params['centers'][0]
-            s_list = data.pde_params['scales'][0]
-
-        # 0) plot the FEM on regular mesh
-        colors = tripcolor(data.uu[0], axes=axs0[i])  # , shading='gouraud', cmap='viridis')
-
-        # Convert PyG graph to NetworkX graph
-        G = to_networkx(data, to_undirected=True)
-
-        # 1) plot the MA mesh
-        # Get node positions from the coordinates attribute in the PyG graph
-        x = data.x_phys
-        positions = {i: x[i].tolist() for i in range(x.shape[0])}
-        nx.draw(G, pos=positions, ax=axs1[i], node_size=1, width=0.5, with_labels=False)
-
-        # #2) plot the FEM on MA (target phys) mesh
-        if opt['data_type'] == 'randg_mix':
-            mesh = data.mesh[0]
-        else:
-            mesh = dataset.mesh
-
-        update_mesh_coords(mesh, x)
-        uu_ma, u_true_ma, _ = poisson2d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list, rand_gaussians=False)
-        colors = tripcolor(uu_ma, axes=axs2[i])#, shading='gouraud', cmap='viridis')
-
-        #3) Get the model deformed mesh solution
-        if opt['model'] in ['backFEM_2D', 'GNN'] and show_mesh_evol_plots:
-            model.plot_evol_flag = True
-
-        if opt['loss_type'] == 'mesh_loss':
-            MLmodel_coords = model(data).to('cpu').detach().numpy()
-        elif opt['loss_type'] == 'modular':
-            MLmodel_coords = model(data).to('cpu').detach().numpy()
-        elif opt['loss_type'] == 'pde_loss':
-            coeffs, MLmodel_coords, sol = model(data)
-            MLmodel_coords = MLmodel_coords.to('cpu').detach().numpy()
-
-        if opt['model'] in ['backFEM_2D', 'GNN'] and show_mesh_evol_plots:
-            model.plot_evol_flag = False
-
-        # 3) plot the MLmodel mesh and evol if applicable
-        positions = {i: MLmodel_coords[i].tolist() for i in range(MLmodel_coords.shape[0])}
-        nx.draw(G, pos=positions, ax=axs3[i], node_size=1, width=0.5, with_labels=False)
-
-        # 4) plot the FEM on MLmodel mesh
-        update_mesh_coords(mesh, MLmodel_coords)
-        # solve poisson
-        uu_gnn, u_true_gnn, f = poisson2d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list,
-                                                                      rand_gaussians=False)
-        colors = tripcolor(uu_gnn, axes=axs4[i])#, shading='gouraud', cmap='viridis')
-
-        # 5) plot the error of MA mesh versus regular mesh
-        # error = uu_ma - data.uu[0]
-        # colors = tripcolor(error, axes=axs5[i])#, shading='gouraud', cmap='viridis')
-        # error = Function(uu_ma.function_space())
-        # error.assign(uu_ma - data.uu[0])
-        # tripcolor(error, axes=axs5[i])
-
-        # 6) plot the error of MLmodel mesh versus regular mesh
-        # error = uu_gnn - data.uu[0]
-        # colors = tripcolor(error, axes=axs6[i])#, shading='gouraud', cmap='viridis')
-        # error = Function(uu_gnn.function_space())
-        # error.assign(uu_gnn - data.uu[0])
-        # tripcolor(error, axes=axs6[i])
-
-    if opt['show_plots']:
-        plt.show()
-
-
-
-
-def plot_individual_meshes(dataset, model, opt):
-    dim = len(opt['mesh_dims'])
-
-    # update mesh coordinates
-    # visualise first N meshes and results
-    N = 1
-    loader = DataLoader(dataset, batch_size=1)
-    for i, data in enumerate(loader):
-        print(f"visualising mesh {i}")
-        if opt['show_plots']:
-            vizualise_grid_with_edges(data.x_phys, data.edge_index, opt, boundary_nodes=data.boundary_nodes)
-            vizualise_grid_with_edges(data.x_comp, data.edge_index, opt, boundary_nodes=data.boundary_nodes)
-            learned_mesh = model(data)
-            if opt['fix_boundary']:
-                mask = ~data.to_boundary_edge_mask * ~data.to_corner_nodes_mask * ~data.diff_boundary_edges_mask
-                edge_index = data.edge_index[:, mask]
-                # need to add self loops for the corner nodes or they go to zero
-                corner_nodes = torch.cat([torch.from_numpy(arr) for arr in data.corner_nodes]).repeat(2, 1)
-                edge_index = torch.cat([edge_index, corner_nodes], dim=1)
-
-            _ = vizualise_grid_with_edges(learned_mesh, edge_index, opt,
-                                                     boundary_nodes=data.boundary_nodes, node_labels=False,
-                                                     node_boundary_map=data.node_boundary_map, corner_nodes=data.corner_nodes, edge_weights=model.gnn_deformer.convs[-1].alphas)
-
-        # update firedrake computational mesh with deformed coordinates
-        if opt['loss_type'] == 'mesh_loss':
-            MLmodel_coords = model(data).to('cpu').detach().numpy()
-        elif opt['loss_type'] == 'pde_loss':
-            coeffs, MLmodel_coords, sol = model(data)
-            MLmodel_coords = MLmodel_coords.to('cpu').detach().numpy()
-
-        mesh = dataset.mesh
-        update_mesh_coords(mesh, MLmodel_coords)
-        # solve poisson
-        c_list = data.pde_params['centers'][0] #todo check this annoying property of PyG I believe, making indexing necessary
-        s_list = data.pde_params['scales'][0]
-
-        if dim == 1:
-            uu, u_true, f = poisson1d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list,
-                                                                  rand_gaussians=False)
-
-        elif dim == 2:
-            uu, u_true, f = poisson2d_fmultigauss_bcs(mesh, c_list=c_list, s_list=s_list,
-                                                                  rand_gaussians=False)
-            plot_solutions(uu, u_true)
-
-        if i == N-1:
-            break

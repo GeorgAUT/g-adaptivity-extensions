@@ -1,162 +1,216 @@
+import os
+from tqdm.auto import tqdm
+from copy import deepcopy
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
-from params import get_params, run_params, set_seed, get_arg_list
-from utils_main import plot_training_evol
-from data import generate_mesh_2d
+import wandb
+
 from data import make_data_name, MeshInMemoryDataset
 from data_mixed import MeshInMemoryDataset_Mixed
 from data_mixed_loader import Mixed_DataLoader
-from data_all import AllMeshInMemoryDataset
-from GNN import GNN, MLP
-from firedrake_difFEM.difFEM_2d import gradient_meshpoints_2D
-from firedrake_difFEM.difFEM_1d import gradient_meshpoints_1D
+from utils_main import plot_training_evol, inner_progress
+from utils_train import equidistribution_loss
+from models.mesh_adaptor_model import Mesh_Adaptor
+from models.UM2N_aux.um2n_loss import UM2N_loss
+
+from params import get_params, run_params, tf_sweep_args, set_seed, get_arg_list
 
 
 def get_data(opt, train_test="test"):
+
     mesh_dims = get_arg_list(opt['mesh_dims'])
+    num_data = opt['num_train'] if train_test == "train" else opt['num_test']
     opt = make_data_name(opt, train_test)
+    print(f"Data name: {opt['data_name']}")
 
-    if opt['data_type'] == 'all':
-        dataset = AllMeshInMemoryDataset(f"../data/{opt['data_name']}", mesh_dims, opt)
-        # dataset = AllMeshInMemoryDataset(f"../data/{train_test_data_name}", mesh_dims, opt)
-        mask = (dataset.data.pde_params['scale_value'] == opt['scale']) & (dataset.data.pde_params['mon_power'] == opt['mon_power'])
-        dataset = dataset[mask]
-
-    elif opt['data_type'] == 'randg_mix':
-        dataset = MeshInMemoryDataset_Mixed(f"../data/{opt['data_name']}", "test", opt['num_train'], mesh_dims, opt)
-        # dataset = MeshInMemoryDataset_Mixed(f"../data/{train_test_data_name}", "test", opt['num_train'], mesh_dims, opt)
-
-    elif opt['dataset'] in ['fd_mmpde_1d', 'fd_mmpde_2d', 'fd_ma_2d', 'fd_M2N_2d']:  # firedrake MA grid with pde data
-        num_data = opt['num_train'] if train_test == "train" else opt['num_test']
-        dataset = MeshInMemoryDataset(f"../data/{opt['data_name']}", train_test, num_data, mesh_dims, opt)  # 11x11 node mesh
-        # dataset = MeshInMemoryDataset(f"../data/{train_test_data_name}", train_test, num_data, mesh_dims, opt)  # 11x11 node mesh
-
-    elif opt['dataset'] == 'grid':
-        dataset = generate_mesh_2d(mesh_dims[0], mesh_dims[1])
-
-    if train_test == "train" and opt['train_frac'] is not None:
-        sub_idxs = np.random.choice(len(dataset), int(len(dataset) * opt['train_frac']), replace=False)
-        if opt['data_type'] == 'randg_mix':
-            dataset.data_list = [dataset.data_list[i] for i in list(sub_idxs)]
-        else:
-            dataset = dataset[sub_idxs]
-    elif train_test == "test" and opt['test_frac'] is not None:
-        sub_idxs = np.random.choice(len(dataset), int(len(dataset) * opt['test_frac']), replace=False)
-        if opt['data_type'] == 'randg_mix':
-           dataset.data_list = [dataset.data_list[i] for i in list(sub_idxs)]
-        else:
-            dataset = dataset[sub_idxs]
+    if opt['data_type'] == 'randg_mix':
+        # this branch services
+        # Poisson_square_mixed
+        # Poisson_cube_mixed
+        # Poisson_patches_mixed
+        dataset = MeshInMemoryDataset_Mixed(f"{opt['data_dir']}/{opt['data_name']}", num_data, mesh_dims, train_test, opt)
+    else:
+        # this branch services
+        # Poisson_structured testing dataset
+        # Poisson_square_fixed_resolution
+        #TODO Poisson_cube_fixed_resolution - DONE
+        #TODO Poisson_patches - DONE
+        # Burgers_square_fixed_resolution
+        # NavierStokes
+        #TODO headland & L
+        dataset = MeshInMemoryDataset(f"{opt['data_dir']}/{opt['data_name']}", train_test, num_data, mesh_dims, opt)
 
     return dataset
 
-def get_model(opt, dataset):
-    if opt['model'] == 'GNN':
-        model = GNN(dataset, opt).to(opt['device'])
-    elif opt['model'] == 'MLP':
-        model = MLP(dataset, opt).to(opt['device'])
-    elif opt['model'] == 'learn_Mon_1D':
-        model = learn_Mon_RK4_1D(dataset, opt).to(opt['device'])
-    elif opt['model'] == 'learn_Mon_2D':
-        model = learn_Mon_RK4_2D(dataset, opt).to(opt['device'])
 
-    return model
 
 def main(opt):
-    opt = make_data_name(opt, "train")
     dataset = get_data(opt, train_test="train")
     if opt['data_type'] == 'randg_mix':
         exclude_keys = ['boundary_nodes_dict', 'mapping_dict', 'node_boundary_map', 'eval_errors', 'pde_params']
         follow_batch = []
-        loader = Mixed_DataLoader(dataset, batch_size=opt['batch_size'], shuffle=not(opt['overfit_num']),
-                                  exclude_keys=exclude_keys, follow_batch=follow_batch, generator=torch.Generator(device=opt['device']))
+        loader = Mixed_DataLoader(dataset, batch_size=opt['batch_size'], shuffle=not (opt['train_idxs']),
+                                  exclude_keys=exclude_keys, follow_batch=follow_batch,
+                                  generator=torch.Generator(device=opt['device']))
     else:
         new_generator = torch.Generator(device=opt['device'])
-        loader = DataLoader(dataset, batch_size=opt['batch_size'], shuffle=not(opt['overfit_num']), generator=new_generator)
+        loader = DataLoader(dataset, batch_size=opt['batch_size'], shuffle=not (opt['train_idxs']),
+                            generator=new_generator)
 
-    model = get_model(opt, dataset)
+    dim = dataset.dim
+    model = Mesh_Adaptor(opt, gfe_in_c=dim + 1, lfe_in_c=dim + 1, deform_in_c=dim + 1).to(opt['device'])
 
-    if opt['loss_type'] == 'mesh_loss':
-        if opt['loss_fn'] == 'mse':
-            loss_fn = F.mse_loss
-        elif opt['loss_fn'] == 'l1':
-            loss_fn = F.l1_loss
-    elif opt['loss_type'] == 'pde_loss':
+    if opt['loss_fn'] == 'mse':
         loss_fn = F.mse_loss
+    elif opt['loss_fn'] == 'l1':
+        loss_fn = F.l1_loss
 
     optimizer = torch.optim.Adam(model.parameters(), lr=opt['lr'], weight_decay=opt['decay'])
 
-    model.train()
     loss_list = []
     batch_loss_list = []
     best_loss = float('inf')
-
-    for epoch in range(opt['epochs']):
-        epoch_loss = 0
+    best_dict = None
+    
+    model.train()
+    
+    epoch_bar = tqdm(range(opt['epochs']), desc='Epochs', position=0, leave=True,
+                    bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')
+    
+    for epoch in epoch_bar:
         model.epoch = epoch
-
+        epoch_loss = 0
+        batch_loss_list = []
+        
         for i, data in enumerate(loader):
             data.idx = i
+            
+            if opt['train_idxs']:
+                idx = dataset.data_idx_dict[i] if opt['data_type'] == "RBF" else i
+                if idx not in opt['train_idxs']:
+                    continue
+            
+            # Reset mesh coordinates before forward pass
+            if opt['mesh_file_type'] == 'bin':
+                dataset.reset_mesh_coordinates()
+            
             optimizer.zero_grad()
-
+            
             if opt['loss_type'] == 'mesh_loss':
                 data = data.to(opt['device'])
-                out = model(data)
-                loss = loss_fn(out, data.x_phys)
+                x_phys = model(data)
+                loss = loss_fn(x_phys, data.x_ma)
+                
+            elif opt['loss_type'] == 'UM2N_loss':
+                x_phys = model(data)
+                loss = UM2N_loss(x_phys, loss_fn, data,
+                                use_inversion_loss=opt['use_inversion_loss'],
+                                use_area_loss=opt['use_area_loss'],
+                                weight_deform_loss=opt['weight_deform_loss'],
+                                weight_area_loss=opt['weight_area_loss'],
+                                weight_chamfer_loss=opt['weight_chamfer_loss'])
+                
+            elif opt['loss_type'] in ['pde_loss_regularised']:
+                if dataset.dim == 1:
+                    n_meshpoints = data.num_nodes
+                elif dataset.dim == 2:
+                    n_meshpoints = int(np.sqrt(data.num_nodes))
+                elif dataset.dim == 3:
+                    n_meshpoints = int(np.cbrt(data.num_nodes))
 
-            elif opt['loss_type'] == 'pde_loss':
-                coeffs, x_phys, sol = model(data)
-                loss = loss_fn(sol.to(opt['device']), data.u_true_fine_tensor.to(opt['device']))
+                if opt['data_type'] == 'randg_mix':
+                    coarse_solver = getattr(dataset, f"PDESolver_coarse_{n_meshpoints}")
+                else:
+                    coarse_solver = dataset.PDESolver_coarse
+                    
+                if opt['data_type'] == 'randg_mix':
+                    pde_params = data.batch_dict[0]['pde_params']
+                else:
+                    pde_params = data.pde_params
 
-            elif opt['loss_type'] == 'modular':
-                # Get lenght of list
-                if len(opt['mesh_dims'])==2:
-                    x_phys = model(data)
-                    x_phys_copy = x_phys.detach().clone()
-                    loss, x_grads = gradient_meshpoints_2D(opt, data, x_phys_copy.detach())
-                    pseudo_loss = sum(sum(x_phys * x_grads.detach()))
-                elif len(opt['mesh_dims'])==1:
-                    x_phys = model(data)[:,0]
-                    x_phys_copy = x_phys.detach().clone()
-                    loss, x_grads = gradient_meshpoints_1D(opt, data, x_phys_copy.detach())
-                    pseudo_loss = sum(x_phys * x_grads.detach())
+                x_phys = model(data)
+                coarse_solver.update_solver(pde_params)
+                try:
+                    if opt['pde_type'] in ['Poisson', 'Burgers']:
+                        pseudo_loss, loss = coarse_solver.loss(opt, data.uu_ref[0], x_phys)
+                    elif opt['pde_type'] == 'NavierStokes':
+                        pseudo_loss, loss = coarse_solver.loss(opt, [data.uu_ref[0], data.pp_ref[0]], x_phys)
+                    pseudo_loss = pseudo_loss + opt['loss_regulariser_weight'] * equidistribution_loss(x_phys, data)
+                except:
+                    Warning("PDE loss failed, using only regulariser for this datapoint")
+                    pseudo_loss = opt['loss_regulariser_weight'] * equidistribution_loss(x_phys, data)
+                    loss = pseudo_loss.detach()
 
-            epoch_loss += loss.item()
-            if opt['loss_type'] == 'modular' and not opt['gnn_dont_train']:
+            # Get the current loss for this batch
+            current_loss = loss.item()
+            epoch_loss += current_loss
+            batch_loss_list.append(current_loss)
+
+            # Update epoch bar with batch progress
+            epoch_bar.set_postfix_str(f"loss={current_loss:.2e} | {inner_progress(i+1, len(loader))}")
+
+            # Perform backpropagation and optimizer step
+            if (opt['loss_type'] == 'modular' or 
+                opt['loss_type'] == 'pde_loss_firedrake' or 
+                opt['loss_type'] == 'mixed_UM2N_pde_loss_firedrake' or 
+                opt['loss_type'] == 'pde_loss_regularised') and not opt['gnn_dont_train']:
                 pseudo_loss.backward()
                 optimizer.step()
             elif not opt['gnn_dont_train']:
                 loss.backward()
                 optimizer.step()
 
-            print("     batch ", i, "batch loss: ", loss.item())
+            # Reset mesh coordinates after backward pass
+            if opt['mesh_file_type'] == 'bin':
+                dataset.reset_mesh_coordinates()
+        
+        # After completing all batches for this epoch
+        # Store total epoch loss and update epoch progress bar
+        avg_loss = epoch_loss/len(loader)
+        epoch_bar.set_postfix(loss=f"{avg_loss:.2e}")
+        epoch_bar.set_description(f"Epoch {epoch+1}/{opt['epochs']}")
 
-            batch_loss_list.append(loss.item())
-
-        loss_list.append(epoch_loss)
-        print("epoch: ", epoch, "epoch loss: ", epoch_loss)
-
+        # Save best model
         if epoch_loss < best_loss:
             best_loss = epoch_loss
-            best_dict = model.state_dict().copy()
+            best_dict = deepcopy(model.state_dict())
 
-    if opt['loss_type'] == 'modular':
-        if 'save_model' in opt.keys() and opt['save_model'][0] == 'save':
-            torch.save([loss_list,batch_loss_list], '../models/loss_list_' + opt['save_model'][1] + '.pth')
+        # Save model checkpoint if configured
+        if opt['wandb_save_model'] and opt['wandb_checkpoint_freq'] is not None and (epoch + 1) % opt['wandb_checkpoint_freq'] == 0:
+            torch.save(best_dict, os.path.join(wandb.run.dir, f"model_best_epoch_{epoch}.pt"))
+            artifact = wandb.Artifact(f"model_best_epoch_{epoch}", type="model")
+            artifact.add_file(os.path.join(wandb.run.dir, f"model_best_epoch_{epoch}.pt"))
+            wandb.log_artifact(artifact)
 
-    #plot evolution of loss, mon_power and scale params
     if opt['show_train_evol_plots']:
-        loss_fig = plot_training_evol(loss_list, "loss", batch_loss_list=batch_loss_list, batches_per_epoch=len(dataset)//opt['batch_size'])
+        loss_fig = plot_training_evol(loss_list, "loss", batch_loss_list=batch_loss_list,
+                                      batches_per_epoch=len(dataset) // opt['batch_size'])
 
+    if opt['wandb']:
+        epoch_loss_pairs = [(epoch, loss) for epoch, loss in enumerate(loss_list)]
+        loss_table = wandb.Table(data=epoch_loss_pairs, columns=["epoch", "loss"])
+        wandb.log({"final_epochs": epoch,
+                   "final_loss": epoch_loss,
+                   "loss_table": loss_table})
+
+        if opt['wandb_log_plots'] and opt['show_train_evol_plots']:
+            wandb.log({"loss": wandb.Image(loss_fig)})
+
+        if opt['wandb_save_model']:
+            torch.save(best_dict, os.path.join(wandb.run.dir, "model_best.pt"))
+            torch.save(model.state_dict(), os.path.join(wandb.run.dir, "model_last.pt"))
+            artifact = wandb.Artifact("model", type="model")
+            artifact.add_file(os.path.join(wandb.run.dir, "model_best.pt"))
+            artifact.add_file(os.path.join(wandb.run.dir, "model_last.pt"))
+            wandb.log_artifact(artifact)
+    
     model.load_state_dict(best_dict)
 
-    return model, dataset
+    return model
 
 
 if __name__ == "__main__":
     opt = get_params()
-    opt = run_params(opt)
-    rand_seed = np.random.randint(3, 10000)
-    opt['seed'] = rand_seed
     main(opt)

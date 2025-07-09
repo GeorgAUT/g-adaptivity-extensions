@@ -1,0 +1,14 @@
+# Navier-Stokes equations
+# Only overrides what's different from base_config.yaml
+run:
+  wandb_project: "g-adaptivity-navier-stokes"
+  pde_type: "NavierStokes"
+  data_type: "randg"
+
+pde:
+  U_mean: 1.0
+  timestep: 0.01
+  num_time_steps: 5
+
+data:
+  mesh_geometry: "rectangle"

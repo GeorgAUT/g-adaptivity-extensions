@@ -1,5 +1,5 @@
 ## g-adaptivity
-This repository is the official implementation of [g-adaptivity](https://arxiv.org/abs/2030.12345). A GNN based approach to adaptive mesh refinement for FEM.
+This repository is the official implementation of [g-adaptivity](https://arxiv.org/abs/2407.04516). A GNN based approach to adaptive mesh refinement for FEM.
 
 
 ## Requirements
@@ -17,22 +17,37 @@ in workspace directory run:
 curl -O https://raw.githubusercontent.com/firedrakeproject/firedrake/master/scripts/firedrake-install
 python firedrake-install
 source ~/workspace/firedrake/bin/activate
+source ./firedrake_new/bin/activate
 ```
 
 To install requirements:
 ```setup
 pip install torch torchvision torchaudio
 pip install torch-geometric==2.4.0
+pip install torchdiffeq
+pip install torchquad
 pip install pandas
 pip install plotly
-pip install torchdiffeq
+pip install wandb
+pip install git+https://github.com/pyroteus/movement.git
+pip install git+https://github.com/rusty1s/pytorch_scatter.git
 pip install adjustText
 pip install imageio\[ffmpeg\]
 pip install tensorboard
-pip install wandb
-pip install git+https://github.com/pyroteus/movement.git
-pip install torchquad
-pip install git+https://github.com/rusty1s/pytorch_scatter.git
+pip install einops
+pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+pip install pyvista
+
+#python -m pip install siphash24
+#cd /home/firedrake/firedrake/src/
+#git clone https://github.com/mesh-adaptation/animate.git
+#cd animate
+#pip install -e .
+
+git clone https://github.com/mesh-adaptation/movement.git
+cd movement
+make install
+cd ../src
 ```
 
 ## Training and Evaluation

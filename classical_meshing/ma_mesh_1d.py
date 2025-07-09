@@ -3,6 +3,8 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
+from src.utils_data import map_firedrake_to_cannonical_ordering_1d
+
 # Define error measure (here we have m(x)=(1+|u_xx|^2)^(1/5)
 def m(x, params):
     c_list = params['centers']
@@ -14,21 +16,13 @@ def m(x, params):
     else:
         return (1 + diag_hessian(x, c_list, s_list))**0.2#0.05
 
-def diag_hessian_old(x, c_list=[[0.25,0.25]], s_list=[[0.2,0.2]]): # outputs sqrt(|u_xx|^2+|u_yy|^2) for the exact Gaussian
-    u_xx = torch.zeros_like(x)
-    for i in range(len(c_list)):
-        c = c_list[i] # center of Gaussian reference solution
-        s = s_list[i]# scaling of Gaussian reference solution
 
-        u_xx += torch.abs(-((2 * (-2 * c[0] ** 2 + s[0] ** 2 + 4 * c[0] * x - 2 * x ** 2)) / s[0] ** 4)*torch.exp(-(x-c[0])**2/s[0]**2)**2)
-    return u_xx
 def diag_hessian(x, c_list=[[0.25,0.25]], s_list=[[0.2,0.2]]): # outputs sqrt(|u_xx|^2+|u_yy|^2) for the exact Gaussian
     u_xx = torch.zeros_like(x)
     for i in range(len(c_list)):
         c = c_list[i] # center of Gaussian reference solution
         s = s_list[i]# scaling of Gaussian reference solution
 
-        #u_xx += torch.abs(-((2 * (-2 * c[0] ** 2 + s[0] ** 2 + 4 * c[0] * x - 2 * x ** 2)) / s[0] ** 4)*torch.exp(-(x-c[0])**2/s[0]**2)**2)
         u_xx += -((2 * (-2 * c[0] ** 2 + s[0] ** 2 + 4 * c[0] * x - 2 * x ** 2)) / s[0] ** 4)*torch.exp(-(x-c[0])**2/s[0]**2)
     return (u_xx)**2/torch.max((u_xx)**2) # Normalize to 1
 
@@ -38,7 +32,7 @@ def RHS(m, X, N, params):
     Xix = torch.linspace(0, 1, N) # Define mesh in computational domain
     Xixfine = torch.linspace(0, 1, 2 * N - 1) #MMPDE5 half grid size
     deltaXi=Xix[1] # Spatial grid size (in Xi domain)
-    tau= 0.1#0.02#0.1 # Parameter in MMPDE5
+    tau= 0.1 #Parameter in MMPDE5
 
     mvec = m(Xixfine, params)
     mvec2 = m(Xix, params)
@@ -51,7 +45,7 @@ def RHS_burgers(m, X, N):
     Xix = torch.linspace(0, 1, N) # Define mesh in computational domain
     Xixfine = torch.linspace(0, 1, 2 * N - 1) #MMPDE5 half grid size
     deltaXi=Xix[1] # Spatial grid size (in Xi domain)
-    tau= 0.1#0.02#0.1 # Parameter in MMPDE5
+    tau= 0.1 #Parameter in MMPDE5
 
     mvec = m(Xixfine)
     mvec2 = m(Xix)
@@ -73,14 +67,12 @@ def RK4(x,f,h):
 def f(X, N, params):
     A = torch.zeros( X.shape[0])
     sol = RHS(m, X, N, params)  # Perform time-stepping using the above RHS to move the mesh
-    # A[:, 1:N - 1, 1:N - 1] = sol # Zero padding to fix boundary
     A[ 1:N-1] = sol # Zero padding to fix boundary
     return A
 
 def f_burgers(m, X, N):
     A = torch.zeros( X.shape[0])
     sol = RHS_burgers(m, X, N)  # Perform time-stepping using the above RHS to move the mesh
-    # A[:, 1:N - 1, 1:N - 1] = sol # Zero padding to fix boundary
     A[ 1:N-1] = sol # Zero padding to fix boundary
     return A
 
@@ -95,7 +87,6 @@ def MMPDE5_1d(X, N, params):
     while j < 10000 and convergence_measure > tol:
         j = j + 1
         Xold = X.clone() # Save previous values
-        # [X, Y] = RK4([X, Y], f, CFL / N ** 3)  # Single time step in MMPDE5
         X = RK4(X, lambda x: f(x, N, params), CFL / N ** 3)  #need partial f to pass N
         convergence_measure = (torch.sum(np.abs(X - Xold)))  # Measure size of update
         if convergence_measure > 1.0 / tol:  # CFL needs to be adapted if the PDE is very stiff (large m(x))
@@ -132,6 +123,16 @@ def MMPDE5_1d_burgers(m, X, N):
         print('Warning: MMPDE5 has not yet converged to stationary solution.')
 
     return X, j, build_time
+
+
+def deform_mesh_mmpde1d(x_comp, n, opt):
+    # deform the mesh with MMPDE5 in 1d
+    mapping_dict, mapping_tensor, X_fd_grid, X_fd_vec = map_firedrake_to_cannonical_ordering_1d(x_comp, n)
+    coords_mmpde5 = [None]
+    coords_mmpde5[0], j, build_time = MMPDE5_1d(X_fd_grid, n, opt)
+    x_phys = coords_mmpde5[0]
+
+    return x_phys, j, build_time
 
 
 if __name__ == "__main__":

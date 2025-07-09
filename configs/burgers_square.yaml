@@ -1,0 +1,15 @@
+# Burgers equation on square domain
+# Only overrides what's different from base_config.yaml
+run:
+  wandb_project: "g-adaptivity-burgers-square"
+  pde_type: "Burgers"
+  data_type: "randg"
+
+pde:
+  nu: 0.001
+  amplitude_rescale: 0.6
+  timestep: 0.02
+  num_time_steps: 10
+
+data:
+  mesh_geometry: "rectangle"

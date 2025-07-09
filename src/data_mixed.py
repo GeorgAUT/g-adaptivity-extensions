@@ -1,47 +1,82 @@
 from torch_geometric.data import Batch
-import sys
-sys.path.append('../')
 
 from data import *
 from data_mixed_loader import Mixed_DataLoader
 
-
 class MeshInMemoryDataset_Mixed(pyg.data.InMemoryDataset):
-    def __init__(self, root, train_test, num_data, mesh_dims, opt, transform=None, pre_transform=None):
+    def __init__(self, root, num_data, mesh_dims, train_test, opt, transform=None, pre_transform=None, pre_filter=None):
         self.root = root
         self.train_test = train_test
         self.num_data = num_data
-
         self.opt = opt
         self.dim = len(mesh_dims)
+
         if self.dim == 1:
             self.n = mesh_dims[0]
         elif self.dim == 2:
             self.n = mesh_dims[0]
             self.m = mesh_dims[1]
-        self.num_x_comp_features = self.dim
-        self.num_x_phys_features = self.dim
-        self.mesh = None
-        self.x_comp_shared = None
-        self.mapping_dict = None
-        self.mapping_tensor = None
-        self.mapping_dict_fine = None
-        self.mapping_tensor_fine = None
+        elif self.dim == 3:
+            self.n = mesh_dims[0]
+            self.m = mesh_dims[1]
+            self.k = mesh_dims[2]
 
-        super(MeshInMemoryDataset_Mixed, self).__init__(self.root, transform, pre_transform)
-        # self.data, self.slices = torch.load(self.processed_paths[0])
-        self.data_list = torch.load(self.processed_paths[0])
+        # Initialize patch configuration if enabled
+        self.use_patches = opt.get('use_patches', False)
+        if self.use_patches and self.dim == 2:
+            self.num_patches_x = opt.get('num_patches_x', 10)
+            self.num_patches_y = opt.get('num_patches_y', 10)
+            self.patch_size_x = 1.0 / self.num_patches_x
+            self.patch_size_y = 1.0 / self.num_patches_y
+
+        self.num_x_comp_features = self.dim
+        self.num_x_ma_features = self.dim
+
+        if self.train_test == "train":
+            self.min_mesh_points = self.opt['mesh_dims_train'][0][0]
+            self.max_mesh_points = self.opt['mesh_dims_train'][-1][0]
+        elif self.train_test == "test":
+            self.min_mesh_points = self.opt['mesh_dims_test'][0][0]
+            self.max_mesh_points = self.opt['mesh_dims_test'][-1][0]
+
+        super(MeshInMemoryDataset_Mixed, self).__init__(root, transform, pre_transform, pre_filter)
+
+        self.data_list = torch.load(self.processed_paths[0], weights_only=False)  # Load the data list
         print("Dataset loaded with", len(self.data_list), "items.")
 
         custom_attributes_path = os.path.join(self.root, "processed", "custom_attributes.pt")
         if os.path.exists(custom_attributes_path):
-            custom_attributes = torch.load(custom_attributes_path)
-            self.mapping_tensor_fine = custom_attributes['mapping_tensor_fine']
-            self.mapping_dict_fine = custom_attributes['mapping_dict_fine']
+            custom_attributes = torch.load(custom_attributes_path, weights_only=False)
+            if opt['pde_type'] == 'Poisson':
+                self.mapping_tensor_fine = custom_attributes['mapping_tensor_fine']
+                self.mapping_dict_fine = custom_attributes['mapping_dict_fine']
             self.orig_opt = custom_attributes['orig_opt']
 
-        self.mesh = None
-        self.mesh_deformed = None
+       # Load the meshes
+        if opt['mesh_file_type'] == 'h5':
+            # Load from HDF5 CheckpointFile
+            processed_dir = os.path.join(self.root, "processed")
+            os.makedirs(processed_dir, exist_ok=True)  # Ensure directory exists
+            fine_mesh_file_path = os.path.join(processed_dir, "fine_mesh.h5")
+            if os.path.exists(fine_mesh_file_path):
+                with CheckpointFile(fine_mesh_file_path, 'r') as mesh_file:
+                    self.fine_mesh = mesh_file.load_mesh("fine_mesh")
+            for n_meshpoints in range(self.min_mesh_points, self.max_mesh_points + 1):
+                coarse_mesh_file_path = os.path.join(processed_dir, "coarse_mesh.h5")
+                if self.opt['mesh_file_type'] == 'h5':
+                    with CheckpointFile(os.path.join(self.root, "processed", f"mesh_{n_meshpoints}.h5"), 'r') as mesh_file:
+                        setattr(self, f"mesh_{n_meshpoints}",
+                                mesh_file.load_mesh(f"ref_mesh_{n_meshpoints}"))
+
+        elif opt['mesh_file_type'] == 'bin':
+            self.init_mesh()
+
+        SolverFine = get_solve_firedrake_class(opt)
+        self.PDESolver_fine = SolverFine(opt, self.dim, self.fine_mesh)
+
+        for n_meshpoints in range(self.min_mesh_points, self.max_mesh_points + 1):
+            SolverCoarse = get_solve_firedrake_class(opt)
+            setattr(self, f"PDESolver_coarse_{n_meshpoints}", SolverCoarse(opt, self.dim, getattr(self, f"mesh_{n_meshpoints}")))
 
     @property
     def raw_file_names(self):
@@ -54,348 +89,254 @@ class MeshInMemoryDataset_Mixed(pyg.data.InMemoryDataset):
     def download(self):
         pass
 
+    def init_mesh(self):
+        # Create PDE solvers
+        opt = self.opt
+
+        if opt['mesh_geometry'] == 'rectangle':
+            mesh_scale = self.opt.get('mesh_scale', 1.0)
+
+            if self.dim == 1:
+                self.fine_mesh = UnitIntervalMesh(self.opt['eval_quad_points'] - 1, name="fine_mesh")
+            elif self.dim == 2:
+                self.fine_mesh = UnitSquareMesh(self.opt['eval_quad_points'] - 1, self.opt['eval_quad_points'] - 1,
+                                                name="fine_mesh")
+            elif self.dim == 3:
+                self.fine_mesh = UnitCubeMesh(self.opt['eval_quad_points'] - 1,
+                                          self.opt['eval_quad_points'] - 1,
+                                          self.opt['eval_quad_points'] - 1,
+                                          name="fine_mesh")
+
+            # Scale mesh coordinates
+            self.fine_mesh.coordinates.dat.data[:] *= mesh_scale
+            self.initial_fine_coords = self.fine_mesh.coordinates.copy(deepcopy=True)
+
+            for n_meshpoints in range(self.min_mesh_points, self.max_mesh_points + 1):
+                if self.dim == 1:
+                    mesh = UnitIntervalMesh(n_meshpoints - 1, name=f"ref_mesh_{n_meshpoints}")
+                elif self.dim == 2:
+                    mesh = UnitSquareMesh(n_meshpoints - 1, n_meshpoints - 1, name=f"ref_mesh_{n_meshpoints}")
+                elif self.dim == 3:
+                    mesh = UnitCubeMesh(n_meshpoints - 1, n_meshpoints - 1, n_meshpoints - 1, name=f"ref_mesh_{n_meshpoints}")
+
+                # Scale mesh coordinates
+                mesh.coordinates.dat.data[:] *= mesh_scale
+                setattr(self, f"mesh_{n_meshpoints}", mesh)
+
+                # Store initial coordinates
+                setattr(self, f"initial_mesh_coords_{n_meshpoints}",
+                        getattr(self, f"mesh_{n_meshpoints}").coordinates.copy(deepcopy=True))
+
+    def reset_mesh_coordinates(self):
+        if hasattr(self, 'initial_fine_coords'):
+            self.fine_mesh.coordinates.assign(self.initial_fine_coords)
+        for n_meshpoints in range(self.min_mesh_points, self.max_mesh_points + 1):
+            if hasattr(self, f"initial_mesh_coords_{n_meshpoints}"):
+                getattr(self, f"mesh_{n_meshpoints}").coordinates.assign(getattr(self, f"initial_mesh_coords_{n_meshpoints}"))
+
     def process(self):
         opt = self.opt
-        if self.dim == 1:
-            self.fine_mesh = UnitIntervalMesh(opt['eval_quad_points'] - 1, name="fine_mesh")
-        elif self.dim == 2:
-            self.fine_mesh = UnitSquareMesh(opt['eval_quad_points'] - 1, opt['eval_quad_points'] - 1, name="fine_mesh")
 
-        if opt['data_type'] == 'randg_mix':
-            self.mix_num_gauss = np.random.choice(opt['num_gauss_range'])
+        # First initialize the mesh regardless of file type
+        self.init_mesh()
 
-            if self.train_test == "train":
-                min_mesh_points = opt['mesh_dims_train'][0][0]
-                max_mesh_points = opt['mesh_dims_train'][-1][0]
-            elif self.train_test == "test":
-                min_mesh_points = opt['mesh_dims_test'][0][0]
-                max_mesh_points = opt['mesh_dims_test'][-1][0]
-            for n_meshpoints in range(min_mesh_points, max_mesh_points + 1):
-                if self.dim == 1:
-                    setattr(self, f"mesh_{n_meshpoints}", UnitIntervalMesh(n_meshpoints - 1, name=f"ref_mesh_{n_meshpoints}"))
-                    setattr(self, f"mesh_deformed_{n_meshpoints}", UnitIntervalMesh(n_meshpoints - 1, name=f"deformed_mesh_{n_meshpoints}"))
-                elif self.dim ==2:
-                    setattr(self, f"mesh_{n_meshpoints}",
-                            UnitSquareMesh(n_meshpoints - 1, n_meshpoints - 1, name=f"ref_mesh_{n_meshpoints}"))
-                    setattr(self, f"mesh_deformed_{n_meshpoints}",
-                            UnitSquareMesh(n_meshpoints - 1, n_meshpoints - 1, name=f"deformed_mesh_{n_meshpoints}"))
+        # Save the meshes to HDF5 files if needed
+        if self.opt['mesh_file_type'] == 'h5':
+            for n_meshpoints in range(self.min_mesh_points, self.max_mesh_points + 1):
                 with CheckpointFile(os.path.join(self.root, "processed", f"mesh_{n_meshpoints}.h5"), 'w') as mesh_file:
                     mesh_file.save_mesh(getattr(self, f"mesh_{n_meshpoints}"))
-                with CheckpointFile(os.path.join(self.root, "processed", f"deformed_mesh_{n_meshpoints}.h5"), 'w') as mesh_file:
-                    mesh_file.save_mesh(getattr(self, f"mesh_deformed_{n_meshpoints}"))
 
-        # self.mapping_dict = mapping_dict
-        # self.mapping_tensor = mapping_tensor
-        # self.x_comp_shared = torch.tensor(self.mesh.coordinates.dat.data_ro)
+        SolverFine = get_solve_firedrake_class(opt)
+        self.PDESolver_fine = SolverFine(opt, self.dim, self.fine_mesh)
+
+        for n_meshpoints in range(self.min_mesh_points, self.max_mesh_points + 1):
+            SolverCoarse = get_solve_firedrake_class(opt)
+            setattr(self, f"PDESolver_coarse_{n_meshpoints}", SolverCoarse(opt, self.dim, getattr(self, f"mesh_{n_meshpoints}")))
+
         self.x_fine_shared = torch.tensor(self.fine_mesh.coordinates.dat.data_ro)
+        
+        # Map fine mesh to canonical ordering
+        if opt['mesh_geometry'] == 'rectangle':
+            if self.dim == 1:
+                self.mapping_dict_fine, self.mapping_tensor_fine, X_fd_grid_fine, X_fd_vec_fine = map_firedrake_to_cannonical_ordering_1d(self.x_fine_shared, self.opt['eval_quad_points'])
+            elif self.dim == 2:
+                self.mapping_dict_fine, self.mapping_tensor_fine, X_fd_grid_fine, Y_fd_grid_fine, X_fd_vec_fine, Y_fd_vec_fine = map_firedrake_to_cannonical_ordering_2d(self.x_fine_shared, self.opt['eval_quad_points'], self.opt['eval_quad_points'])
+            elif self.dim == 3:
+                self.mapping_dict_fine, self.mapping_tensor_fine, X_fd_grid_fine, Y_fd_grid_fine, Z_fd_grid_fine, X_fd_vec_fine, Y_fd_vec_fine, Z_fd_vec_fine = map_firedrake_to_cannonical_ordering_3d(self.x_fine_shared, self.opt['eval_quad_points'], self.opt['eval_quad_points'], self.opt['eval_quad_points'])
+        
+            custom_attributes = {
+                'mapping_dict_fine': self.mapping_dict_fine,
+                'mapping_tensor_fine': self.mapping_tensor_fine,
+                'orig_opt': opt.as_dict() if type(opt)!=dict else opt
+            }
+        else:
+            custom_attributes = {
+                'orig_opt': opt.as_dict() if type(opt)!=dict else opt
+            }
 
-        if self.dim == 1:
-            # mapping_dict, mapping_tensor, X_fd_grid, X_fd_vec = map_firedrake_to_cannonical_ordering_1d(self.x_comp_shared, n)
-            mapping_dict_fine, mapping_tensor_fine, X_fd_grid_fine, X_fd_vec_fine = map_firedrake_to_cannonical_ordering_1d(self.x_fine_shared, self.opt['eval_quad_points'])
-        elif self.dim == 2:
-            # mapping_dict, mapping_tensor, X_fd_grid, Y_fd_grid, X_fd_vec, Y_fd_vec = map_firedrake_to_cannonical_ordering_2d(self.x_comp_shared, n, m)
-            mapping_dict_fine, mapping_tensor_fine, X_fd_grid_fine, Y_fd_grid_fine, X_fd_vec_fine, Y_fd_vec_fine = map_firedrake_to_cannonical_ordering_2d(self.x_fine_shared, self.opt['eval_quad_points'], self.opt['eval_quad_points'])
-
-        self.mapping_dict_fine = mapping_dict_fine
-        self.mapping_tensor_fine = mapping_tensor_fine
-
-        custom_attributes = {
-            # 'x_comp_shared': self.x_comp_shared,
-            # 'mapping_dict': self.mapping_dict,
-            # 'mapping_tensor': self.mapping_tensor,
-            'mapping_dict_fine': self.mapping_dict_fine,
-            'mapping_tensor_fine': self.mapping_tensor_fine,
-            'orig_opt': opt,
-        }
         torch.save(custom_attributes, os.path.join(self.root, "processed", "custom_attributes.pt"))
 
-        idx = 0
         data_list = []
-        if opt['data_type'] in ['fixed', 'asym_sweep2d']:
-            num_data_dict = {1: 9, 2: 25}
-            self.num_data = num_data_dict[self.dim]
+        for idx in range(self.num_data):
+            # Choose random mesh size
+            n = self.opt['mesh_dims_train'][np.random.choice(len(self.opt['mesh_dims_train']))][0] if self.train_test == "train" \
+                else self.opt['mesh_dims_test'][np.random.choice(len(self.opt['mesh_dims_test']))][0]
+            m = n
+            n_meshpoints = n
+            coarse_mesh = getattr(self, f"mesh_{n_meshpoints}")
 
-        for i in range(self.num_data):
-            successful_eval = True
+            data = firedrake_mesh_to_PyG(coarse_mesh)
 
+            # Map coarse to canonical ordering
+            x_comp = torch.tensor(coarse_mesh.coordinates.dat.data_ro)
             if self.dim == 1:
-                if opt['data_type'] == 'randg_mix':
-                    if self.train_test == "train":
-                        n = opt['mesh_dims_train'][np.random.choice(len(opt['mesh_dims_train']))][0]
-                    elif self.train_test == "test":
-                        n = opt['mesh_dims_test'][np.random.choice(len(opt['mesh_dims_test']))][0]
-                # self.mesh = UnitIntervalMesh(n - 1, name="ref_mesh")
-                # self.mesh_deformed = UnitIntervalMesh(n - 1, name="deformed_mesh")
-                n_meshpoints = n
-                self.mesh = getattr(self, f"mesh_{n_meshpoints}")
-                self.mesh_deformed = getattr(self, f"mesh_deformed_{n_meshpoints}")
-
+                data.mapping_dict, data.mapping_tensor, X_fd_grid, X_fd_vec = map_firedrake_to_cannonical_ordering_1d(x_comp, n)
             elif self.dim == 2:
-                if opt['data_type'] == 'randg_mix':
-                    if self.train_test == "train":
-                        n = opt['mesh_dims_train'][np.random.choice(len(opt['mesh_dims_train']))][0]
-                        m = n
-                        self.mix_num_gauss = np.random.choice(opt['num_gauss_range'])
-                    elif self.train_test == "test":
-                        n = opt['mesh_dims_test'][np.random.choice(len(opt['mesh_dims_test']))][0]
-                        m = n
-                        self.mix_num_gauss = np.random.choice(opt['num_gauss_range'])
+                data.mapping_dict, data.mapping_tensor, X_fd_grid, Y_fd_grid, X_fd_vec, Y_fd_vec = map_firedrake_to_cannonical_ordering_2d(x_comp, n, m)
+            elif self.dim == 3:
+                data.mapping_dict, data.mapping_tensor, X_fd_grid, Y_fd_grid, Z_fd_grid, X_fd_vec, Y_fd_vec, Z_fd_vec = map_firedrake_to_cannonical_ordering_3d(x_comp, n, m, n)
 
-                n_meshpoints = n
-                self.mesh = getattr(self, f"mesh_{n_meshpoints}")
-                self.mesh_deformed = getattr(self, f"mesh_deformed_{n_meshpoints}")
+            pde_solver_coarse = getattr(self, f"PDESolver_coarse_{n_meshpoints}")
 
-            data = firedrake_mesh_to_PyG(self.mesh)
+            # Get PDE specific parameters
+            #set number of gaussians
+            mix_num_gauss = np.random.choice(self.opt['num_gauss_range'])
+            pde_solver_coarse.mix_num_gauss = mix_num_gauss
+            pde_params = pde_solver_coarse.get_pde_params(idx, self.num_data, mix_num_gauss)
 
-            self.x_comp_shared = torch.tensor(self.mesh.coordinates.dat.data_ro)
-
-            if self.dim == 1:
-                data.mapping_dict, data.mapping_tensor, X_fd_grid, X_fd_vec = map_firedrake_to_cannonical_ordering_1d(self.x_comp_shared, n)
-            elif self.dim == 2:
-                data.mapping_dict, data.mapping_tensor, X_fd_grid, Y_fd_grid, X_fd_vec, Y_fd_vec = map_firedrake_to_cannonical_ordering_2d(self.x_comp_shared, n, m)
-
-            c_list = []
-            s_list = []
-            if opt['data_type'] in ['randg']:
-                for j in range(opt['num_gauss']):
-                        c = np.random.uniform(0, 1, self.dim).astype('f') #float to match torch precison
-                        s = np.random.uniform(0.1, 0.5, self.dim).astype('f')
-                        c_list.append(c)
-                        s_list.append(s)
-
-            elif opt['data_type'] in ['randg_mix']:
-                for j in range(self.mix_num_gauss):
-                        c = np.random.uniform(0, 1, self.dim).astype('f') #float to match torch precison
-                        s = np.random.uniform(0.1, np.sqrt(0.4), 1).astype('f').repeat(self.dim)
-                        c_list.append(c)
-                        s_list.append(s)
-
-            elif opt['data_type'] == 'fixed':
-                if self.dim == 1: #9 interrior points in 0.1-0.9 grid and iterate over them
-                    x_coord = (i + 1) / (num_data_dict[self.dim] + 1)
-                    c1 = np.array([x_coord]).astype('f') #float to match torch precison
-                    s1 = np.array([opt['scale']]).astype('f')
-                    c_list.append(c1)
-                    s_list.append(s1)
-                    if opt['num_gauss'] == 2:
-                        c2 = np.array([0.5])
-                        s2 = np.array([opt['scale']])
-                        c_list.append(c2)
-                        s_list.append(s2)
-                elif self.dim == 2: #25 interrior points in 0.1-0.9 grid and iterate over them plus a fixed central Gaussian
-                    x_coord1 = i % 5 * 0.2 + 0.1
-                    y_coord1 = i // 5 * 0.2 + 0.1
-                    c1 = np.array([x_coord1, y_coord1])
-                    s1 = np.array([opt['scale'], opt['scale']])
-                    c_list.append(c1)
-                    s_list.append(s1)
-                    if opt['num_gauss'] == 2:
-                        c2 = np.array([0.5, 0.5])
-                        s2 = np.array([opt['scale'], opt['scale']])
-                        c_list.append(c2)
-                        s_list.append(s2)
-
-            elif opt['data_type'] == 'asym_sweep2d' and self.dim == 2:
-                x_coord1 = i % 5 * 0.2 + 0.1
-                y_coord1 = i // 5 * 0.2 + 0.1
-                c1 = np.array([x_coord1, y_coord1])
-                s1 = np.array([opt['scale_x'], opt['scale_y']])
-                c_list.append(c1)
-                s_list.append(s1)
-                if opt['num_gauss'] == 2:
-                    c2 = np.array([0.5, 0.5])
-                    s2 = np.array([opt['scale_x'], opt['scale_y']])
-                    c_list.append(c2)
-                    s_list.append(s2)
-
-            pde_params = {'centers': c_list, 'scales': s_list}
-            pde_params['scale_list'] = s_list
-            if opt['data_type'] not in ['randg', 'randg_mix']:
-                if self.dim == 1:
-                    pde_params['scale_value'] = s_list[0]  # just for naming
-                elif self.dim == 2:
-                    pde_params['scale_value'] = s_list[0][0]  # just for naming
+            # Pass some global parameters from opt to pde_params for the solvers
             pde_params['mon_power'] = opt['mon_power']
-            pde_params['mesh_type'] = opt['mesh_type']
+            pde_params['monitor_type'] = opt['monitor_type']
             pde_params['mon_reg'] = opt['mon_reg']
-            pde_params['num_gauss'] = opt['num_gauss']
+            pde_params['num_gauss'] = mix_num_gauss
+            pde_params['mix_num_gauss'] = mix_num_gauss
             pde_params['eval_quad_points'] = opt['eval_quad_points']
-            pde_params['fast_M2N_monitor'] = self.opt['fast_M2N_monitor']
-            if self.opt['M2N_alpha'] is not None:
-                pde_params['M2N_alpha'] = self.opt['M2N_alpha']
-            if self.opt['M2N_beta'] is not None:
-                pde_params['M2N_beta'] = self.opt['M2N_beta']
+            # Store pde_params in the data object
             data.pde_params = pde_params
 
-            #deform mesh using MMPDE/MA
+            #sample data, update solver and solve PDE
+            pde_solver_coarse.update_solver(pde_params)
+            u = pde_solver_coarse.solve()
+
+            #save inputs to GNN
+            data.u_tensor = torch.from_numpy(u.dat.data)
+            Hessian_Frob_u = pde_solver_coarse.get_Hessian_Frob_norm()
+            data.Hessian_Frob_u_tensor = torch.from_numpy(Hessian_Frob_u.dat.data)
+
+            # For Poisson save the exact f
+            if opt['pde_type'] == 'Poisson':
+                pde_data = pde_solver_coarse.get_pde_data(pde_params)
+                pde_fs = pde_solver_coarse.get_pde_function_space()
+                f_data = project(pde_data['f'], pde_fs)
+                data.f_tensor = torch.from_numpy(f_data.dat.data)
+
+            self.PDESolver_fine.update_solver(pde_params)
+            uu_ref =  self.PDESolver_fine.solve()
+
+            #Deform mesh using MMPDE/MA
             if self.dim == 1:
-                data.x_phys, data.ma_its, data.build_time = deform_mesh_mmpde1d(self.x_comp_shared, n, pde_params)
+                data.x_ma, data.ma_its, data.build_time = deform_mesh_mmpde1d(x_comp, self.n, pde_params)
             elif self.dim == 2:
-                if opt['dataset'] in ['fd_ma_2d','fd_M2N_2d']:
-                    x_phys, data.ma_its, data.build_time = deform_mesh_ma2d(self.x_comp_shared, n, m, pde_params)
-                    data.x_phys = torch.from_numpy(x_phys)
-                elif opt['dataset'] == 'fd_mmpde_2d':
-                    data.x_phys, data.ma_its, data.build_time = deform_mesh_mmpde2d(self.x_comp_shared, n, m, pde_params)
+                x_ma, data.ma_its, data.build_time = deform_mesh_ma2d(x_comp, coarse_mesh, pde_solver_coarse, u, Hessian_Frob_u, opt, pde_params, SolverCoarse)
+                data.x_ma = torch.from_numpy(x_ma)
+            elif self.dim == 3:
+                x_ma, data.ma_its, data.build_time = deform_mesh_ma3d(x_comp, coarse_mesh, pde_solver_coarse, u, Hessian_Frob_u, opt, pde_params, SolverCoarse)
 
-            # num_meshpoints = opt['mesh_dims'][0] if self.dim == 1 else opt['mesh_dims'][0]
-            num_meshpoints = n if self.dim == 1 else n
+            data.x_ma = torch.from_numpy(x_ma)
 
-            if self.dim == 1:
-                eval_fct = poisson1d_fmultigauss_bcs
-                #send in the deformed mesh so not to alter the original mesh
-                fcts_on_grids_dict, eval_errors_dict = eval_grid_MMPDE_MA(data, self.mesh, self.mesh_deformed, self.fine_mesh, eval_fct, self.dim, num_meshpoints, c_list, s_list, opt)
-            elif self.dim == 2:
-                eval_fct = poisson2d_fmultigauss_bcs
-                x_values = np.linspace(0, 1, opt['eval_quad_points'])
-                y_values = np.linspace(0, 1, opt['eval_quad_points'])
-                X, Y = np.meshgrid(x_values, y_values)
-                eval_vec = np.reshape(np.array([X, Y]), [2, opt['eval_quad_points'] ** 2])
+            # Build suffix for PDE data
+            filename_suffix_coarse = f"dim_{self.dim}" \
+                              f"_mon_{data.pde_params['mon_power']}_reg_{data.pde_params['mon_reg']}_{int(mix_num_gauss)}gauss_{idx}_pde_data_coarse.{self.opt['mesh_file_type']}"
+            filename_suffix_fine = f"dim_{self.dim}" \
+                              f"_mon_{data.pde_params['mon_power']}_reg_{data.pde_params['mon_reg']}_{int(mix_num_gauss)}gauss_{idx}_pde_data_fine.{self.opt['mesh_file_type']}"
 
-                fcts_on_grids_dict, eval_errors_dict = eval_grid_MMPDE_MA(data, self.mesh, self.mesh_deformed, self.fine_mesh, eval_fct, self.dim, num_meshpoints, c_list, s_list, opt, eval_vec, X, Y)
-                if fcts_on_grids_dict['uu_ma'] == 0.:
-                    successful_eval = False
-                    print("Error in eval_grid_MMPDE_MA, saving None's")
+            pde_data_file_coarse = os.path.join(self.root, "processed", filename_suffix_coarse)
+            pde_data_file_fine = os.path.join(self.root, "processed", filename_suffix_fine)
 
-            #fine eval (saving tensors for fast pde loss)
-            if self.dim == 1:
-                uu_fine, u_true_fine, f_fine = poisson1d_fmultigauss_bcs(self.fine_mesh, c_list, s_list)
-            elif self.dim == 2:
-                uu_fine, u_true_fine, f_fine = poisson2d_fmultigauss_bcs(self.fine_mesh, c_list, s_list, rand_gaussians=False)
-
-            data.eval_errors = eval_errors_dict
-            data.successful_eval = successful_eval
-
-            # save the firedrake functions to file
-            if opt['data_type'] in ['randg', 'randg_mix']:
-                filename_suffix = f"dim_{self.dim}" \
-                                  f"_mon_{data.pde_params['mon_power']}_reg_{data.pde_params['mon_reg']}_{opt['num_gauss']}gauss_{idx}_pde_data.h5"
-            else:
-                filename_suffix = f"dim_{self.dim}_scale_{round(data.pde_params['scale_value'], 2)}" \
-                                  f"_mon_{data.pde_params['mon_power']}_reg_{data.pde_params['mon_reg']}_{opt['num_gauss']}gauss_{idx}_pde_data.h5"
-
-            pde_data_file = os.path.join(self.root, "processed", filename_suffix)
-
-            with CheckpointFile(pde_data_file, 'w') as pde_file:
-                # pde_file.save_mesh(self.mesh)
-                # pde_file.save_mesh(self.mesh_deformed)
-                pde_file.save_function(fcts_on_grids_dict['uu_grid'], name="uu")
-                pde_file.save_function(fcts_on_grids_dict['u_true_grid'], name="u_true")
-                pde_file.save_function(fcts_on_grids_dict['f_grid'], name="f")
-                if data.successful_eval:
-                    pde_file.save_function(fcts_on_grids_dict['uu_ma'], name="uu_ma")
-                    pde_file.save_function(fcts_on_grids_dict['u_true_ma'], name="u_true_ma")
-                    pde_file.save_function(fcts_on_grids_dict['f_ma'], name="f_ma")
-
-            #also saving the torch tensors
-            #note we delay mapping firedrake functions to cannonical ordering to maintain consistency with the mesh and x_comp/phys
-            data.uu_tensor = torch.from_numpy(fcts_on_grids_dict['uu_grid'].dat.data)
-            data.u_true_tensor = torch.from_numpy(fcts_on_grids_dict['u_true_grid'].dat.data)
-            data.f_tensor = torch.from_numpy(fcts_on_grids_dict['f_grid'].dat.data)
-            data.uu_fine_tensor = torch.from_numpy(uu_fine.dat.data)
-            data.u_true_fine_tensor = torch.from_numpy(u_true_fine.dat.data)
-            data.f_fine_tensor = torch.from_numpy(f_fine.dat.data)
-            if data.successful_eval:
-                data.uu_MA_tensor = torch.from_numpy(fcts_on_grids_dict['uu_ma'].dat.data)  # [self.mapping_tensor])
-                data.u_true_MA_tensor = torch.from_numpy(fcts_on_grids_dict['u_true_ma'].dat.data)  # [self.mapping_tensor])
-                data.f_MA_tensor = torch.from_numpy(fcts_on_grids_dict['f_ma'].dat.data)  # [self.mapping_tensor])
-            else:
-                data.uu_MA_tensor = torch.tensor([0.])
-                data.u_true_MA_tensor = torch.tensor([0.])
-                data.f_MA_tensor = torch.tensor([0.])
+            # ----- Save PDE solution + mesh if desired -----
+            # HDF5 or BIN
+            if self.opt['mesh_file_type'] == 'h5':
+                with CheckpointFile(pde_data_file_coarse, 'w') as pde_file:
+                    pde_file.save_mesh(data.mesh)
+                    pde_file.save_function(u, name="u_coarse")
+                with CheckpointFile(pde_data_file_fine, 'w') as pde_file:
+                    pde_file.save_mesh(data.mesh_deformed)
+                    pde_file.save_function(uu_ref, name="uu_ref")
+            elif self.opt['mesh_file_type'] == 'bin':
+                save_function(u, pde_data_file_coarse)
+                save_function(uu_ref, pde_data_file_fine)
 
             if self.pre_transform is not None:
                 data = self.pre_transform(data)
 
             data_list.append(data)
-            idx += 1
 
-        # data, slices = self.collate(data_list)
-        # data.apply(to_float32)
-        # torch.save((data, slices), self.processed_paths[0])
-        #above doesn't work for varying data sizes, so save the list of Data objects
-        data_list = [data.apply(to_float32) for data in data_list]  # Apply any final processing to each data item
-        torch.save(data_list, self.processed_paths[0])  # Save the list of Data objects
+        data_list = [data.apply(to_float32) for data in data_list]
+        torch.save(data_list, self.processed_paths[0])
+
 
     def get(self, idx):
-        # data = super().get(idx)
         data = self.data_list[idx]
-        # data.x_comp = self.x_comp_shared.float()
-        # data.x_comp = data.x_comp_shared.float()
-
-        if isinstance(data.x_phys, np.ndarray):
-            data.x_phys = torch.from_numpy(data.x_phys)
-
-        mon_power = round(data.pde_params['mon_power'], 2)
         num_gauss = data.pde_params['num_gauss']
-        if 'mon_reg' in data.pde_params:
-            mon_reg = round(data.pde_params['mon_reg'], 2)
-        if self.opt['data_type'] in ['randg', 'randg_mix']:
-            filename_suffix = f"dim_{self.dim}_mon_{mon_power}_reg_{mon_reg}_{num_gauss}gauss_{idx}_pde_data.h5"
-        else:
-            # Retrieve scale and mon_power from data object
-            scale = round(data.pde_params['scale_value'], 2)
-            filename_suffix = f"dim_{self.dim}_scale_{scale}_mon_{mon_power}_reg_{mon_reg}_{num_gauss}gauss_{idx}_pde_data.h5"
-        pde_data_file = os.path.join(self.root, "processed", filename_suffix)
+        
+        # Build file suffixes
+        filename_suffix_coarse = f"dim_{self.dim}" \
+                         f"_mon_{data.pde_params['mon_power']}_reg_{data.pde_params['mon_reg']}_{int(num_gauss)}gauss_{idx}_pde_data_coarse.{self.opt['mesh_file_type']}"
+        filename_suffix_fine = f"dim_{self.dim}" \
+                         f"_mon_{data.pde_params['mon_power']}_reg_{data.pde_params['mon_reg']}_{int(num_gauss)}gauss_{idx}_pde_data_fine.{self.opt['mesh_file_type']}"
+        
+        # Add patch indices if patches are enabled
+        if self.use_patches and hasattr(data, 'coarse_mesh') and self.dim == 2:
+            node_coords = data.coarse_mesh.coordinates.dat.data_ro
+            data.patch_indices = self.get_patch_indices(node_coords)
+            
+        pde_data_file_coarse = os.path.join(self.root, "processed", filename_suffix_coarse)
+        pde_data_file_fine = os.path.join(self.root, "processed", filename_suffix_fine)
 
-        with CheckpointFile(pde_data_file, 'r') as pde_file:
-            # data.mesh = pde_file.load_mesh("ref_mesh")
-            # data.mesh_deformed = pde_file.load_mesh("deformed_mesh")
+        if self.dim == 1:
+            n_meshpoints = data.num_nodes
+        elif self.dim == 2:
             n_meshpoints = int(np.sqrt(data.num_nodes))
-            # Load the meshes
+        elif self.dim == 3:
+            n_meshpoints = int(np.cbrt(data.num_nodes))
+
+        # Load or create meshes based on file type
+        if self.opt['mesh_file_type'] == 'h5':
             with CheckpointFile(os.path.join(self.root, "processed", f"mesh_{n_meshpoints}.h5"), 'r') as mesh_file:
-                mesh = mesh_file.load_mesh(f"ref_mesh_{n_meshpoints}")
-            with CheckpointFile(os.path.join(self.root, "processed", f"deformed_mesh_{n_meshpoints}.h5"), 'r') as mesh_file:
-                deformed_mesh = mesh_file.load_mesh(f"deformed_mesh_{n_meshpoints}")
-            data.mesh = mesh
-            data.mesh_deformed = deformed_mesh
+                coarse_mesh = pde_file.load_mesh(f"ref_mesh_{n_meshpoints}")
+                u_coarse_reg = pde_file.load_function(self.coarse_mesh, "u_coarse")
 
-            uu = pde_file.load_function(data.mesh, "uu")
-            u_true = pde_file.load_function(data.mesh, "u_true")
-            f = pde_file.load_function(data.mesh, "f")
-            if data.successful_eval:
-                uu_ma = pde_file.load_function(data.mesh_deformed, "uu_ma")
-                u_true_ma = pde_file.load_function(data.mesh_deformed, "u_true_ma")
-                f_ma = pde_file.load_function(data.mesh_deformed, "f_ma")
-            else:
-                uu_ma, u_true_ma, f_ma = 0., 0., 0.
+            with CheckpointFile(pde_data_file_fine, 'r') as pde_file:
+                uu_ref = pde_file.load_function(self.fine_mesh, "uu_ref")
 
-        data.uu = uu
-        data.u_true = u_true
-        data.f = f
-        if data.successful_eval:
-            data.uu_ma = uu_ma
-            data.u_true_ma = u_true_ma
-            data.f_ma = f_ma
-        else:
-            data.uu_ma = 0.
-            data.u_true_ma = 0.
-            data.f_ma = 0.
+        elif self.opt['mesh_file_type'] == 'bin':
+            coarse_mesh = getattr(self, f"mesh_{n_meshpoints}")
+            if self.opt['pde_type'] == 'Poisson':
+                u_coarse_reg = load_function(coarse_mesh, pde_data_file_coarse, family="CG", degree=1)
+                uu_ref = load_function(self.fine_mesh, pde_data_file_fine, family="CG", degree=1)
+
+        data.uu_ref = uu_ref
+        data.u_coarse_reg = u_coarse_reg
+        data.coarse_mesh = coarse_mesh
 
         return data
-
-    @property
-    def data(self):
-        # This property will handle converting data_list into a batch when accessed
-        return Batch.from_data_list(self.data_list)
 
     def __len__(self):
         return len(self.data_list)
 
     def __getitem__(self, idx):
-        # Ensure the default implementation works, or override it correctly.
-        # Using the base Dataset class method without modifications usually needs:
         return self.get(idx)
 
     def indices(self):
-        # This should correctly reflect the indices for your dataset
         return list(range(self.__len__()))
 
 
 def mixed_custom_collate(data_list, collate_keys=[]):
-    collate_keys = ['ma_its', 'u_true_MA_tensor', 'f_fine_tensor', 'successful_eval',
-    'uu_fine_tensor', 'eval_errors', 'u_true_fine_tensor',
-    'corner_nodes', 'x_comp', 'x_phys',
-    'f_MA_tensor', 'pde_params', 'uu_tensor', 'edge_index', 'u_true_tensor', 'uu_MA_tensor', 'f_tensor']
+    # collate_keys = ['ma_its', 'u_true_MA_tensor', 'f_fine_tensor', 'successful_eval',
+    #                    'uu_fine_tensor', 'eval_errors', 'u_true_fine_tensor',
+    #                    'corner_nodes', 'x_comp', 'x_phys',
+    # 'f_MA_tensor', 'pde_params', 'uu_tensor', 'edge_index', 'u_true_tensor', 'uu_MA_tensor', 'f_tensor']
+    collate_keys = ['u_tensor', 'Hessian_Frob_u_tensor', 'f_tensor', 'uu_ref', 'x_phys', 'x_ma', 'ma_its', 'build_time']#, 'pde_params']
 
     batch_data = Batch()
     # Initialize containers for all attributes
@@ -417,12 +358,11 @@ def mixed_custom_collate(data_list, collate_keys=[]):
 
     # Concatenate concatenable attributes
     for key, values in concat_attrs.items():
-        batch_data[key] = torch.cat(values, dim=0)
+            batch_data[key] = torch.cat(values, dim=0)
 
     # Handle non-concatenable attributes
-    # For example, you could take the first one, average them, or create a list
     for key, values in special_handling_attrs.items():
-        batch_data[key] = values  # or any other method you deem appropriate
+        batch_data[key] = values
 
     # Create batch indices for the concatenated data
     batch_data.batch = torch.tensor([i for i, data in enumerate(data_list) for _ in range(data.num_nodes)])
@@ -453,36 +393,47 @@ def analyze_data_keys(data_list):
     print("Consistent keys across all data items:", consistent_keys)
     print("Inconsistent keys (missing in some data items):", inconsistent_keys)
 
-    # Optionally, return this information for further processing
     return consistent_keys, inconsistent_keys
 
 
 if __name__ == "__main__":
     opt = get_params()
     opt = run_params(opt)
-
     rand_seed = np.random.randint(3, 10000)
     opt['seed'] = rand_seed
+    opt['pde_type'] = 'Poisson'
 
+    opt['mesh_geometry'] = 'rectangle'
+    opt['mesh_file_type'] = 'bin'
     opt['data_type'] = 'randg_mix'
-    opt['mesh_dims'] = [15, 15] #to make2d
+    dim = 3
+    d3_dim = 10
+    opt['mesh_dims'] = [d3_dim, d3_dim, d3_dim]
     opt['mon_reg'] = 0.1
     opt['rand_gauss'] = True
-    opt['num_train'] = 25#275#5#275#19#3#
-    opt['num_test'] = 25#25#25#125#3#125#17#
-    opt['mesh_dims_train'] = [[15, 15], [20, 20]] #[[3, 3], [4, 4]]#
-    # opt['mesh_dims_test'] = [[12, 12]]#, [23, 23]]
-    opt['mesh_dims_test'] = [[i, i] for i in range(12, 24, 1)]
-    opt['num_gauss_range'] = [1, 2, 3, 5, 6]
+    opt['num_train'] = 10
+    opt['num_test'] = 10
+    opt['anis_gauss'] = False
+    opt['monitor_type'] = 'monitor_hessian'
+    if opt['anis_gauss']:
+        opt['mesh_dims_train'] = [[15, 15], [20, 20]]
+        opt['mesh_dims_test'] = [[i, i] for i in range(12, 24, 1)]
+        opt['num_gauss_range'] = [1, 2, 3, 5, 6]
+    else:
+        opt['mesh_dims_train'] = [[d3_dim, d3_dim, d3_dim]]
+        opt['mesh_dims_test'] = [[d3_dim, d3_dim, d3_dim]]
+        opt['num_gauss_range'] = [2, 3]
 
-    for train_test in ['test']:#'train', 'test']:
+    opt['eval_quad_points'] = 30
+    opt['monitor_alpha'] = 20.0
+
+    for train_test in ['train', 'test']:
         opt = make_data_name(opt, train_test)
         if train_test == 'train':
-            dataset = MeshInMemoryDataset_Mixed(f"../data/{opt['data_name']}", train_test, opt['num_train'], opt['mesh_dims'], opt)
+            dataset = MeshInMemoryDataset_Mixed(f"../data/{opt['data_name']}", opt['num_train'], opt['mesh_dims'], train_test, opt)
         elif train_test == 'test':
-            dataset = MeshInMemoryDataset_Mixed(f"../data/{opt['data_name']}", train_test, opt['num_test'], opt['mesh_dims'], opt)
+            dataset = MeshInMemoryDataset_Mixed(f"../data/{opt['data_name']}", opt['num_test'], opt['mesh_dims'], train_test, opt)
 
-        # Assuming you have a list of Data objects in `data_list`
         consistent_keys, inconsistent_keys = analyze_data_keys(dataset.data_list)
 
         exclude_keys = ['boundary_nodes_dict', 'mapping_dict', 'node_boundary_map', 'eval_errors', 'pde_params']
@@ -494,4 +445,10 @@ if __name__ == "__main__":
             print(f"Batch {i} retrieved successfully.")
             print(data)
 
-        plot_initial_dataset_2d(dataset, opt)
+        if dim == 1:
+            pass
+            plot_initial_dataset_1d(dataset, opt)
+        elif dim == 2:
+            plot_initial_dataset_2d(dataset, opt)
+        elif dim == 3:
+            plot_initial_dataset_3d(dataset, opt)

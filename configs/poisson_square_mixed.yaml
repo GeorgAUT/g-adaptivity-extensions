@@ -1,0 +1,11 @@
+# Poisson equation on square domain with mixed meshes
+# Only overrides what's different from base_config.yaml
+run:
+  wandb_project: "g-adaptivity-poisson-square-mixed"
+  pde_type: "Poisson"
+  data_type: "randg_mix"
+
+data:
+  mesh_geometry: "rectangle"
+  mesh_dims_train: [[15, 15], [20, 20]]
+  mesh_dims_test: [[12, 12], [14, 14], [16, 16], [18, 18], [20, 20], [22, 22]]

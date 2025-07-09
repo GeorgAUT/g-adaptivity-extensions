@@ -1,0 +1,12 @@
+# Poisson equation on cube domain with mixed meshes
+# Only overrides what's different from base_config.yaml
+run:
+  wandb_project: "g-adaptivity-poisson-cube-mixed"
+  pde_type: "Poisson"
+  data_type: "randg_mix"
+
+data:
+  mesh_geometry: "cube"
+  mesh_dims_train: [[10, 10, 10], [12, 12, 12]] 
+  mesh_dims_test: [[8, 8, 8], [10, 10, 10], [12, 12, 12], [14, 14, 14]]
+  monitor_alpha: 40.0  # 40 for 3D experiments

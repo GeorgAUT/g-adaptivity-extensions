@@ -1,0 +1,49 @@
+# Base configuration for wandb sweep runs
+# High-level experiment settings
+run:
+  wandb: true
+  wandb_project: "g-adaptivity-sweeps"
+  show_dataset_plots: false
+  wandb_log_plots: false
+  wandb_sweep: true  # Mark this as a sweep config
+  pde_type: "Poisson"
+  data_type: "randg_mix"
+  model: "UM2N_T"
+  warm_start: false
+  warm_start_path: ""
+  device: "cuda"
+
+# Data-specific parameters
+data:
+  monitor_type: "monitor_hessian"
+  monitor_alpha: 5.0
+  mesh_geometry: "rectangle"
+  mesh_dims: [15, 15]
+  rand_gauss: true
+  anis_gauss: false
+  num_train: 275
+  num_test: 3
+  mesh_dims_train: [[15, 15], [20, 20]]
+  mesh_dims_test: [[12, 12], [14, 14], [16, 16], [18, 18], [20, 20], [22, 22]]
+  data_dir: "../data"
+
+# Experiment parameters - these would typically be varied in sweeps
+exp:
+  epochs: 100
+  batch_size: 1
+  gnn_dont_train: false
+  loss_type: "pde_loss_regularised"
+  loss_regulariser_weight: 0.01
+  lr: 0.001
+
+# Model architecture parameters - these would typically be varied in sweeps
+model:
+  num_transformer_in: 3
+  num_transformer_out: 16
+  num_transformer_embed_dim: 64
+  num_transformer_heads: 4
+  num_transformer_layers: 1
+  transformer_training_mask: false
+  GNN_diffusion: true
+  gnn_activation: "relu"
+  gnn_num_layers: 3
