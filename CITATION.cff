@@ -14,7 +14,7 @@ authors:
     given-names: "Alberto"
   - family-names: "Schratz"
     given-names: "Katharina"
-  - family-names: "Li\`o"
+  - family-names: "Liò"
     given-names: "Pietro"
   - family-names: "Schönlieb"
     given-names: "Carola-Bibiane"
@@ -24,4 +24,4 @@ type: "conference-paper"
 conference: "Forty-second International Conference on Machine Learning"
 year: 2025
 doi: TBC
-url: "https://github.com/JRowbottomGit/g-adaptivity"  # Optional: keep if pointing to related project repo
+url: "https://github.com/JRowbottomGit/g-adaptivity"
