@@ -1,0 +1,33 @@
+[project]
+name = "myproject"
+version = "0.1.0"
+description = "Project using PyTorch, PyTorch Geometric, and related ML libraries"
+authors = [
+  { name = "Your Name", email = "you@example.com" }
+]
+dependencies = [
+  "torch",
+  "torchvision",
+  "torchaudio",
+  "torch-geometric==2.4.0",
+  "torchdiffeq",
+  "torchquad",
+  "pandas",
+  "plotly",
+  "wandb",
+  "adjustText",
+  "imageio[ffmpeg]",
+  "tensorboard",
+  "einops",
+  "pyvista",
+  "torch-scatter",
+  "petsctools",
+  # Git dependencies below
+  "animate @ git+https://github.com/pyroteus/animate.git",
+  "movement @ git+https://github.com/pyroteus/movement.git",
+  #"pytorch3d @ git+https://github.com/facebookresearch/pytorch3d.git@stable"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

@@ -1,79 +1,68 @@
-## WARNING!
+# G-Adaptivity
 
-This code us currently out of date and we are working hard to realise a revised version in the coming weeks. If your project timeline allows, please do wait for the new version as it significantly improves both on speed and performance. If you have any questions in the maintime please do feel free to contact us via email (see preprint for contact details).
+This repository contains the official implementation of [G-Adaptivity](https://arxiv.org/abs/2407.04516): a GNN-based approach to adaptive mesh refinement for finite element methods (FEM).
 
-## g-adaptivity
-This repository is the official implementation of [g-adaptivity](https://arxiv.org/abs/2407.04516). A GNN based approach to adaptive mesh refinement for FEM.
+## 📦 Installation
 
+Our code depends on [Firedrake](https://www.firedrakeproject.org/), a Python-based finite element library used to solve the PDEs in our experiments.
 
-## Requirements
+We recommend installing Firedrake via the [official guide](https://www.firedrakeproject.org/install.html#installing-firedrake), which will also set up a dedicated virtual environment.
 
-First note the firedrake anti-requirement regarding Anaconda, we found this can be managed by having a brew installed version of python (ours 3.11.9) and rearranging the PATH in the .bash_profile to have the brew python before the anaconda python. 
+Once Firedrake is installed and its virtual environment activated, you can install the remaining dependencies from our `pyproject.toml`:
+
 ```bash
-% echo "$PATH"
-/Users//workspace/firedrake/bin:/opt/homebrew/bin:/Users//miniforge3/bin:
+git clone https://github.com/JRowbottomGit/g-adaptivity.git
+cd g-adaptivity
+pip install .
 ```
 
-To install firedrake follow:
-https://www.firedrakeproject.org/download.html
-in workspace directory run:
-```firedrake
-curl -O https://raw.githubusercontent.com/firedrakeproject/firedrake/master/scripts/firedrake-install
-python firedrake-install
-source ~/workspace/firedrake/bin/activate
-source ./firedrake_new/bin/activate
-```
+## 📁 Datasets
 
-To install requirements:
-```setup
-pip install torch torchvision torchaudio
-pip install torch-geometric==2.4.0
-pip install torchdiffeq
-pip install torchquad
-pip install pandas
-pip install plotly
-pip install wandb
-pip install git+https://github.com/pyroteus/movement.git
-pip install git+https://github.com/rusty1s/pytorch_scatter.git
-pip install adjustText
-pip install imageio\[ffmpeg\]
-pip install tensorboard
-pip install einops
-pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
-pip install pyvista
+The code can generate training and test datasets directly, but this is computationally expensive due to the large number of FEM solves involved.
 
-#python -m pip install siphash24
-#cd /home/firedrake/firedrake/src/
-#git clone https://github.com/mesh-adaptation/animate.git
-#cd animate
-#pip install -e .
+To save time, we provide precomputed datasets via Zotero:  
+🔗 [https://www.zotero.org/groups/2722052/g-adaptivity](https://www.zotero.org/groups/2722052/g-adaptivity)
 
-git clone https://github.com/mesh-adaptation/movement.git
-cd movement
-make install
-cd ../src
-```
-
-## Training and Evaluation
-
-To train the model(s) in the paper, run this command:
-
-```train
-python run_pipeline.py
-```
-
-Configs are stored in `params.py`.
-
-## Cite us
-If you found this work useful, please consider citing our paper:
+After downloading, place the datasets in the `data/` folder at the repository root:
 
 ```
-@misc{g-adaptivity,
-      title={G-Adaptive mesh refinement - leveraging graph neural networks and differentiable finite element solvers}, 
-      author={James Rowbottom, Georg Maierhofer, Teo Deveney, Katharina Schratz, Pietro Liò, Carola-Bibiane Schönlieb and Chris Budd},
-      year={2024},
-      eprint={},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG}
+g-adaptivity/
+└── data/
+    └── <your_downloaded_data_here>
+```
+
+> ⚠️ The `data/` folder may not exist until you create it manually or run a script that uses it.
+
+---
+
+## 🚀 Training and Evaluation
+
+To train and evaluate models from the paper, run:
+
+```bash
+python src/run_pipeline.py --config configs/XXX.yaml
+```
+
+where the folder `configs/` contains a number of configuration files that specify examples shown in the main paper including:
+
+- `configs/poisson.yaml`: Training and evaluation of the Poisson equation example.
+- ...
+
+
+## ⚠️ Known issues
+
+- Anaconda is known to cause issues when installing firedrake on MacOS, we recommend using homebrew where possible and consulting the [Firedrake installation guide](https://www.firedrakeproject.org/install.html) as well as their [GitHub page](https://github.com/firedrakeproject/firedrake/issues) for more information and installation support.
+
+
+## 📄 License and citation
+
+This open-source version of our code is licensed under Apache 2.0 - if you are interested in a commercial license with support/customization, please do contact us. If you use this work, please cite:
+
+```
+@inproceedings{Rowbottom_G-Adaptivity_optimised_graph-based_2025,
+    author = {Rowbottom, James and Maierhofer, Georg and Deveney, Teo and Müller, Eike Hermann and Paganini, Alberto and Schratz, Katharina and Lio, Pietro and Schönlieb, Carola-Bibiane and Budd, Chris},
+    booktitle = {Proceedings of the Forty-second International Conference on Machine Learning},
+    title = {{G-Adaptivity: optimised graph-based mesh relocation for finite element methods}},
+    year = {2025}
 }
 ```
