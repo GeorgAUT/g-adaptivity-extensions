@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite the following paper."
+title: "G-Adaptivity: optimised graph-based mesh relocation for finite element methods"
+authors:
+  - family-names: "Rowbottom"
+    given-names: "James"
+  - family-names: "Maierhofer"
+    given-names: "Georg"
+  - family-names: "Deveney"
+    given-names: "Teo"
+  - family-names: "M\"uller"
+    given-names: "Eike Hermann"
+  - family-names: "Paganini"
+    given-names: "Alberto"
+  - family-names: "Schratz"
+    given-names: "Katharina"
+  - family-names: "Li\`o"
+    given-names: "Pietro"
+  - family-names: "Schönlieb"
+    given-names: "Carola-Bibiane"
+  - family-names: "Budd"
+    given-names: "Chris"
+type: "conference-paper"
+conference: "Forty-second International Conference on Machine Learning"
+year: 2025
+doi: TBC
+url: "https://github.com/JRowbottomGit/g-adaptivity"  # Optional: keep if pointing to related project repo
