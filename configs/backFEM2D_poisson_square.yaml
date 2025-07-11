@@ -1,0 +1,21 @@
+# Poisson equation on square domain with mixed meshes using backFEM2D model rather than fast GNNs
+# Only overrides what's different from base_config.yaml
+run:
+  wandb_project: "backFEM2D-poisson-square-mixed"
+  pde_type: "Poisson"
+  data_type: "randg_mix"
+  model: "backFEM_2D"
+
+data:
+  mesh_geometry: "rectangle"
+  mesh_dims_train: [[15, 15], [20, 20]]
+  mesh_dims_test: [[12, 12], [14, 14], [16, 16], [18, 18], [20, 20], [22, 22]]
+  num_train: 3
+  num_test: 3
+
+
+# Training/experiment parameters adjusted for backFEM2D model
+exp:
+  epochs: 1000
+  loss_type: 'pde_loss_firedrake' #  required for backFEM2D
+  lr: 0.1

@@ -7,7 +7,7 @@ run:
   wandb_log_plots: true
   pde_type: "Poisson"  # 'Poisson', 'Burgers', 'NavierStokes'
   data_type: "randg_mix"  # 'randg', 'randg_mix', 'RBF'
-  model: "UM2N_T"  # 'GNN', 'UM2N_T', etc.
+  model: "MeshAdapter"
   warm_start: false
   warm_start_path: ""
   device: "cuda"  # 'cuda' or 'cpu'
@@ -47,7 +47,7 @@ exp:
   epochs: 20
   batch_size: 1
   gnn_dont_train: false
-  loss_type: "pde_loss_regularised"  # 'pde_loss_firedrake', 'UM2N_loss'
+  loss_type: "pde_loss_regularised"  #  'pde_loss_regularised','pde_loss_firedrake' or 'UM2N_loss'
   loss_regulariser_weight: 0.01
   lr: 0.001
 

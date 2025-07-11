@@ -1,0 +1,11 @@
+# Poisson equation on square domain with one mesh size
+# Only overrides what's different from base_config.yaml
+run:
+  wandb_project: "g-adaptivity-poisson-square"
+  pde_type: "Poisson"
+  data_type: "randg"
+
+data:
+  mesh_geometry: "rectangle"
+  mesh_dims_train: [[15, 15]]
+  mesh_dims_test: [[15, 15]]
