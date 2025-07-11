@@ -23,7 +23,7 @@ Once installed in your virtual environment, this will allow you to import g-adap
 The code can generate training and test datasets directly, but this is computationally expensive due to the large number of FEM solves involved.
 
 To save time, we provide precomputed datasets via Zotero:  
-🔗 [https://www.zotero.org/groups/2722052/g-adaptivity](https://www.zotero.org/groups/2722052/g-adaptivity)
+🔗 [https://zenodo.org/records/15800768](https://zenodo.org/records/15800768)
 
 After downloading, place the datasets in the `data/` folder at the repository root:
 
