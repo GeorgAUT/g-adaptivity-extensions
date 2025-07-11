@@ -1,29 +1,21 @@
 import os
-import pandas as pd
 import numpy as np
 import torch
 import wandb
 from torch_geometric.loader import DataLoader
 from torch_geometric.utils import to_networkx
 import networkx as nx
-# import matplotlib
-# matplotlib.use('TkAgg')  # Switch to a different backend to avoid PyCharm's custom backend issues
 import matplotlib.pyplot as plt
 import pyvista as pv
 
 from firedrake import VectorFunctionSpace, Function, dx, inner, assemble, sqrt, UnitIntervalMesh, UnitSquareMesh
 from firedrake.pyplot import plot, tripcolor, triplot
 from firedrake import *
-from firedrake.__future__ import interpolate
 
-from utils_main import vizualise_grid_with_edges
-from data_mixed_loader import Mixed_DataLoader
-from pde_solvers import get_solve_firedrake_class
-from firedrake_difFEM.solve_poisson import poisson2d_fgauss_b0, poisson2d_fmultigauss_bcs, poisson1d_fmultigauss_bcs, plot_solutions
-
-from utils_eval import eval_firedrake_fct, evaluate_error_np, \
-    evaluate_error_np_2d, calculate_error_reduction, update_mesh_coords, \
-    firedrake_call_fct_handler, solve_with_retry, evaluate_model
+from src.utils_main import vizualise_grid_with_edges
+from src.data_mixed_loader import Mixed_DataLoader
+from src.utils_eval import update_mesh_coords
+from firedrake_difFEM.solve_poisson import poisson2d_fmultigauss_bcs, poisson1d_fmultigauss_bcs, plot_solutions
 
 def plot_trained_dataset_2d(dataset, model, opt, show_mesh_evol_plots=False):
     # TODO: This is only supported for Poisson currently

@@ -1,7 +1,6 @@
-from collections.abc import Mapping
-from typing import Any, List, Optional, Sequence, Union
+from typing import Any, List
 import torch
-from torch_geometric.data import DataLoader, Data, Batch
+from torch_geometric.data import Data, Batch
 
 class M2NCustomCollater:
     def __init__(self, follow_batch=None, exclude_keys=None):

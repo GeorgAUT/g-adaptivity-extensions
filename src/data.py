@@ -6,8 +6,6 @@ import torch_geometric as pyg
 from torch_geometric.data import DataLoader
 from torch_geometric.utils import to_networkx
 import networkx as nx
-# import matplotlib
-# matplotlib.use('TkAgg')  # Switch to a different backend to avoid PyCharm's custom backend issues
 import matplotlib.pyplot as plt
 
 from firedrake.pyplot import tripcolor
@@ -18,11 +16,11 @@ from classical_meshing.ma_mesh_1d import deform_mesh_mmpde1d
 from classical_meshing.ma_mesh_2d import deform_mesh_ma2d
 from classical_meshing.ma_mesh_3d import deform_mesh_ma3d
 
-from params import get_params, run_params
-from utils_data import make_data_name, to_float32, convert_to_boundary_mask, \
+from src.params import get_params, run_params
+from src.utils_data import make_data_name, to_float32, convert_to_boundary_mask, \
     map_firedrake_to_cannonical_ordering_2d, map_firedrake_to_cannonical_ordering_1d, \
     map_firedrake_to_cannonical_ordering_3d, save_function, load_function, load_vector_function
-from pde_solvers import get_solve_firedrake_class
+from src.pde_solvers import get_solve_firedrake_class
 
 
 class PyG_Dataset(object):

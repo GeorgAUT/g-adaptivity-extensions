@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 from firedrake import *
 
 from navier_stokes_data.series_approximation import load_expansion

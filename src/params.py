@@ -3,7 +3,7 @@ import os
 import numpy as np
 import random
 import torch
-import yaml  # For YAML config loading
+import yaml
 
 def get_data_args(opt):
     opt['monitor_type'] = "monitor_hessian" # "monitor_hessian_approx" / "mmpde5" for 1D
@@ -217,15 +217,15 @@ def get_params():
     parser = argparse.ArgumentParser()
     
     # Config path arguments
-    parser.add_argument('--base_config', type=str, default='base_config', 
+    parser.add_argument('--base_config', type=str, default='./configs/base_config',
                        help='Base YAML config file (without .yaml extension)')
     parser.add_argument('--exp_config', type=str, default=None, 
                        help='Experiment-specific YAML config file (without .yaml extension)')
 
     #data params
-    parser.add_argument('--data_dir', type=str, default='../data', help="data directory")
+    parser.add_argument('--data_dir', type=str, default='./data', help="data directory")
     parser.add_argument('--dataset', type=str, default='grid', choices=['fd_mmpde_1d','fd_ma_2d'], help="high level data type")
-    parser.add_argument('--data_type', type=str, default='randg', choices=['all', 'structured', 'randg', 'randg_mix', 'RBF'], help="data desriptor")
+    parser.add_argument('--data_type', type=str, default='randg_mix', choices=['all', 'structured', 'randg', 'randg_mix', 'RBF'], help="data desriptor")
     parser.add_argument('--data_name', type=str, default='test', help="data path desriptor")
     parser.add_argument('--num_train', type=int, default=100, help="number of training data points")
     parser.add_argument('--num_test', type=int, default=25, help="number of test data points")
@@ -239,7 +239,7 @@ def get_params():
 
     #mesh params
     parser.add_argument('--mesh_geometry', type=str, default='rectangle')#, choices=['rectangle','cylinder_100','polygon_010','cylinder015','cylinder010','cylinder_100_025','cylinder_100_050'])
-    parser.add_argument('--mesh_dims', nargs='+', default=[11, 11], help='dimensions of mesh - width, height')
+    parser.add_argument('--mesh_dims', nargs='+', default=[15, 15], help='dimensions of mesh - width, height')
     parser.add_argument('--mesh_file_type', type=str, default='bin', help="mesh file type", choices=['hdf5', 'bin'])
     parser.add_argument('--monitor_type', type=str, default='monitor_hessian', help="monitor type")
     parser.add_argument('--fix_boundary', type=str, default="True", help="fix boundary nodes")

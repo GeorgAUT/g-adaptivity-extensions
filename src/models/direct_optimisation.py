@@ -4,8 +4,8 @@
 import torch
 import time
 import torch.nn.functional as F
-from firedrake import *
 import numpy as np
+from firedrake import *
 
 from src.pde_solvers import get_solve_firedrake_class
 from firedrake_difFEM.difFEM_2d import torch_FEM_2D

@@ -1,28 +1,17 @@
 import numpy as np
 import pandas as pd
-import torch
-import wandb
 from tqdm import tqdm
-import time
 from torch_geometric.loader import DataLoader
-from torch_geometric.utils import to_networkx
-import networkx as nx
-import matplotlib
-#matplotlib.use('TkAgg')  # Switch to a different backend to avoid PyCharm's custom backend issues
-import matplotlib.pyplot as plt
 import pyvista as pv
 
 from firedrake import VectorFunctionSpace, Function, dx, inner, assemble, sqrt, UnitIntervalMesh, UnitSquareMesh
-from firedrake.pyplot import plot, tripcolor, triplot
 from firedrake import *
 from firedrake.__future__ import interpolate
 from firedrake.exceptions import ConvergenceError
 
-from firedrake_difFEM.solve_poisson import poisson2d_fgauss_b0, poisson2d_fmultigauss_bcs, poisson1d_fmultigauss_bcs, plot_solutions
-from utils_main import vizualise_grid_with_edges, inner_progress
-
-from data_mixed_loader import Mixed_DataLoader
-from pde_solvers import get_solve_firedrake_class
+from src.utils_main import inner_progress
+from src.data_mixed_loader import Mixed_DataLoader
+from src.pde_solvers import get_solve_firedrake_class
 
 
 def eval_firedrake_fct(uu, u_true, p=2):

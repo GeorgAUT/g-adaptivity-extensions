@@ -7,11 +7,11 @@ import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 import wandb
 
-from data import make_data_name, MeshInMemoryDataset
-from data_mixed import MeshInMemoryDataset_Mixed
-from data_mixed_loader import Mixed_DataLoader
-from utils_main import plot_training_evol, inner_progress
-from utils_train import equidistribution_loss
+from src.data import make_data_name, MeshInMemoryDataset
+from src.data_mixed import MeshInMemoryDataset_Mixed
+from src.data_mixed_loader import Mixed_DataLoader
+from src.utils_main import plot_training_evol, inner_progress
+from src.utils_train import equidistribution_loss
 from models.mesh_adaptor_model import Mesh_Adaptor
 from models.UM2N_aux.um2n_loss import UM2N_loss
 

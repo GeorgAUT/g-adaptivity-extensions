@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from torch_geometric.utils import is_undirected, to_networkx
+from torch_geometric.utils import to_networkx
 import networkx as nx
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
