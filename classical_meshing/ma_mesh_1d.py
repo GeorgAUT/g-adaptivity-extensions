@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from src.utils_data import map_firedrake_to_cannonical_ordering_1d
+from utils_data import map_firedrake_to_cannonical_ordering_1d
 
 # Define error measure (here we have m(x)=(1+|u_xx|^2)^(1/5)
 def m(x, params):

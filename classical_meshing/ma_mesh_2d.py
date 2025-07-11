@@ -4,7 +4,7 @@ import torch
 from firedrake import UnitSquareMesh, triplot, SpatialCoordinate, exp, sqrt, Constant, FunctionSpace, Function, div, grad
 from movement.monge_ampere import *
 
-from src.utils_data import map_firedrake_to_cannonical_ordering_2d
+from utils_data import map_firedrake_to_cannonical_ordering_2d
 
 
 # Define error measure (here we have m(x)=(1+|u_xx|^2+|u_yy|^2)^(1/5)

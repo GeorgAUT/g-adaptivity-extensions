@@ -50,11 +50,11 @@ import torch.nn.functional as F
 from firedrake import *
 from firedrake.__future__ import interpolate
 
-from src.models.UM2N_aux.extractor import LocalFeatExtractor, TransformerEncoder
-from src.models.diffformer_block import Diffformer
-from src.models.UM2N_aux.gatdeformer import DeformGAT
-from src.models.UM2N_aux.inference_utils import InputPack, find_bd, get_conv_feat
-from src.models.UM2N_aux.inference_utils_3d import get_conv_feat_3d
+from models.UM2N_aux.extractor import LocalFeatExtractor, TransformerEncoder
+from models.diffformer_block import Diffformer
+from models.UM2N_aux.gatdeformer import DeformGAT
+from models.UM2N_aux.inference_utils import InputPack, find_bd, get_conv_feat
+from models.UM2N_aux.inference_utils_3d import get_conv_feat_3d
 
 
 class NetDeform(torch.nn.Module):

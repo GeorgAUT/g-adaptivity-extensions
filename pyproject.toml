@@ -32,3 +32,6 @@ dependencies = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["firedrake_difFEM", "navier_stokes_data", "classical_meshing"]
