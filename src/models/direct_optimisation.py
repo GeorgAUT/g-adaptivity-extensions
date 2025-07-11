@@ -7,10 +7,10 @@ import torch.nn.functional as F
 import numpy as np
 from firedrake import *
 
-from src.pde_solvers import get_solve_firedrake_class
+from pde_solvers import get_solve_firedrake_class
+from utils_data import reshape_grid_to_fd_tensor
+from utils_train import equidistribution_loss
 from firedrake_difFEM.difFEM_2d import torch_FEM_2D
-from src.utils_data import reshape_grid_to_fd_tensor
-from src.utils_train import equidistribution_loss
 
 class backFEM_2D(torch.nn.Module):
     '''a wrapper for differentiable backFEM solver that minimizes the L2 error of the approximation and returns the updated mesh, no surrogate here'''

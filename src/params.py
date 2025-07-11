@@ -178,11 +178,7 @@ def load_yaml_config(config_name: str = None, base_config_name: str = 'base_conf
     
     # Helper function to load a single config file
     def _load_config(name):
-        if not name.endswith('.yaml'):
-            name = f"{name}.yaml"
-        
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        config_path = os.path.join(project_root, 'configs', name)
+        config_path = name
         
         if not os.path.exists(config_path):
             print(f"Warning: Config file not found: {config_path}")
@@ -190,6 +186,11 @@ def load_yaml_config(config_name: str = None, base_config_name: str = 'base_conf
         
         with open(config_path, 'r') as f:
             yaml_config = yaml.safe_load(f)
+            
+        # Handle empty files which return None
+        if yaml_config is None:
+            print(f"Warning: Config file is empty: {config_path}")
+            return {}
             
         # Flatten the hierarchical config
         flat_config = {}
@@ -217,7 +218,7 @@ def get_params():
     parser = argparse.ArgumentParser()
     
     # Config path arguments
-    parser.add_argument('--base_config', type=str, default='base_config',
+    parser.add_argument('--base_config', type=str, default='./configs/base_config.yaml',
                        help='Base YAML config file (without .yaml extension)')
     parser.add_argument('--exp_config', type=str, default=None, 
                        help='Experiment-specific YAML config file (without .yaml extension)')

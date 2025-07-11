@@ -21,11 +21,11 @@ data:
   mesh_dims: [15, 15]
   rand_gauss: true
   anis_gauss: false
-  num_train: 275
-  num_test: 3
+  num_train: 25
+  num_test: 25
   mesh_dims_train: [[15, 15], [20, 20]]
   mesh_dims_test: [[12, 12], [13, 13], [14, 14], [15, 15], [16, 16], [17, 17], [18, 18], [19, 19], [20, 20], [21, 21], [22, 22], [23, 23]]
-  data_dir: "../data"
+  data_dir: "./data"
   # Uncomment and modify if needed for specific dataset indices
   # train_idxs: []
   # test_idxs: []
@@ -44,7 +44,7 @@ pde:
 
 # Training/experiment parameters
 exp:
-  epochs: 1
+  epochs: 5
   batch_size: 1
   gnn_dont_train: false
   loss_type: "pde_loss_regularised"  # 'pde_loss_firedrake', 'UM2N_loss'
