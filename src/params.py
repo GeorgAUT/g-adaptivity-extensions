@@ -5,131 +5,13 @@ import random
 import torch
 import yaml
 
-def get_data_args(opt):
-    opt['monitor_type'] = "monitor_hessian" # "monitor_hessian_approx" / "mmpde5" for 1D
-
-    opt['monitor_alpha'] = 5. #40.0 #40 for 3D experiments 5 otherwise
-    if opt['monitor_type'] == "monitor_hessian":
-        opt['monitor_alpha'] = 5.0
-
-    opt['mesh_geometry'] = 'rectangle'#rectangle'#'cylinder_100'  # 'polygon_010' or 'rectangle' or 'cylinder100' or 'cylinder015' or 'cylinder010'
-    if opt['mesh_geometry'] == 'rectangle':
-        opt['mesh_dims'] = [15, 15] #[10, 10, 10]
-
-    #DATA args applies both 1/2D
-    if opt['data_type'] == 'randg':
-        opt['rand_gauss'] = True
-        opt['num_train'] = 10
-        opt['num_test'] = 10
-
-    elif opt['data_type'] == 'randg_mix':
-        opt['rand_gauss'] = True
-        opt['anis_gauss'] = False #True
-        opt['num_train'] = 275 # 6#275 #25#5#275
-        opt['num_test'] = 3 #6 #125 #25#3#125
-        opt['mesh_dims_train'] = [[15, 15], [20, 20]]
-        opt['mesh_dims_test'] = [[i, i] for i in range(12, 24, 1)]
-        # opt['mesh_dims_train']= [[10, 10, 10]]
-        # opt['mesh_dims_test']= [[10, 10, 10]]
-        # opt['train_idxs'] = list(range(10))
-        # opt['test_idxs'] = list(range(10))
-    elif opt['data_type'] == 'RBF':
-        opt['num_train'] = 25
-        opt['num_test'] = 50
-        opt['train_idxs'] = [
-            353, 251, 190, 327, 221, 226, 105, 234, 285, 177,
-            163, 223, 268, 223, 297, 237, 132, 117, 224, 360,
-            269, 349, 213, 175, 139
-        ]
-
-        opt['test_idxs'] = [
-            328, 321, 347, 192, 168, 386, 353, 180, 231, 261,
-            289, 277, 201, 303, 291, 372, 114, 354, 110, 120,
-            156, 299, 191, 328, 399, 163, 317, 209, 152, 163,
-            324, 339, 257, 217, 135, 275, 370, 279, 296, 225,
-            251, 215, 100, 109, 115, 381, 212, 119, 381, 161
-        ]
-    return opt
-
-def get_pde_args(opt):
-    #overwrite params for Burgers
-    if opt['pde_type'] == 'Burgers':
-        opt['nu']=0.001
-        opt['timestep'] = 1/50
-        opt['num_time_steps'] = 10
-    elif opt['pde_type'] == 'NavierStokes':
-        opt['U_mean'] = 1.0
-        opt['timestep'] = 0.01
-        opt['num_time_steps'] = 5
-    return opt
-
-def get_exp_args(opt):
-    opt['epochs'] = 1
-    opt['gnn_dont_train'] = False  # True
-    opt['loss_type'] = 'pde_loss_regularised' #'mixed_UM2N_pde_loss_firedrake'#'pde_loss_firedrake''pde_loss_regularised'
-    # opt['loss_type'] = 'UM2N_loss'
-    if opt['loss_type'] == 'pde_loss_regularised':
-        opt['loss_regulariser_weight'] = 0.01
-
-    return opt
-
-def get_model_args(opt):
-
-    if opt['model'] == 'fixed_mesh_2D':
-        opt['loss_type'] = 'mesh_loss' #'pde_loss'
-
-    elif opt['model'] == 'backFEM_2D':
-        opt['loss_type'] = 'pde_loss_firedrake'
-        opt['lr'] = 10. #5#0.05
-        opt['start_from_ma'] = False #False  # Whether to start optimization from MA mesh or regular grid
-
-    elif opt['model'] == 'UM2N_T':
-        # Transformer arguments
-        opt['num_transformer_in'] = 3  # coord (2) + monitor_val (1)
-        opt['num_transformer_out'] = 16
-        opt['num_transformer_embed_dim'] = 64
-        opt['num_transformer_heads'] = 4
-        opt['num_transformer_layers'] = 1
-        opt['transformer_training_mask'] = False
-        opt['transformer_key_padding_training_mask'] = False
-        opt['transformer_attention_training_mask'] = False
-        opt['transformer_training_mask_ratio_lower_bound'] = 0.5
-        opt['transformer_training_mask_ratio_upper_bound'] = 0.9
-        opt['pretrained_weights'] = None  # Path to pretrained weights
-
-        opt['GNN_diffusion'] = True # True # False
-        opt['grand_step_size'] = 0.1
-        opt['new_model_monitor_type'] = 'UM2N' #'Hessian_Frob_u_tensor' or 'UM2N'
-        opt['diffusion_steps'] = 32
-
-        opt['wandb_save_model'] = True
-
-    return opt
-
 
 def run_params(opt):
-    """Set run parameters from either YAML config or hardcoded values."""
-    exp_config = opt['exp_config']
-    base_config = opt['base_config']
-    # Use YAML config if provided
-    if exp_config:
-        yaml_opts = load_yaml_config(exp_config, base_config)
-        opt.update(yaml_opts)
-    else:            
-        # Otherwise use traditional hardcoded values
-        opt['wandb'] = True #False
-        opt['wandb_project'] = 'camera_ready'
-        opt['show_dataset_plots'] = False
-        opt['wandb_log_plots'] = True
-
-        opt['pde_type'] = 'Poisson'#'NavierStokes'  # 'Poisson', 'Burgers'
-        opt['data_type'] = 'randg_mix'#'randg_mix'#"RBF"  #'randg',#structured #"randg_mix" #"all"
-        opt['model'] = 'UM2N_T'
-
-        opt = get_data_args(opt)
-        opt = get_pde_args(opt)
-        opt = get_exp_args(opt)
-        opt = get_model_args(opt)
+    """Set run parameters from YAML config.
+    exp_config will overwrite base_config.
+    """
+    yaml_opts = load_yaml_config(opt['exp_config'], opt['base_config'])
+    opt.update(yaml_opts)
 
     return opt
 
@@ -167,16 +49,8 @@ def get_arg_list(arg_list):
     return arg_list
 
 def load_yaml_config(config_name: str = None, base_config_name: str = 'base_config') -> dict:
-    """Load and apply layered YAML configuration.
-    
-    Loads configurations in this order:
-    1. Start with empty dict
-    2. Apply base config if specified
-    3. Apply experiment config if specified
-    """
     config = {}
     
-    # Helper function to load a single config file
     def _load_config(name):
         config_path = name
         
@@ -187,12 +61,10 @@ def load_yaml_config(config_name: str = None, base_config_name: str = 'base_conf
         with open(config_path, 'r') as f:
             yaml_config = yaml.safe_load(f)
             
-        # Handle empty files which return None
         if yaml_config is None:
             print(f"Warning: Config file is empty: {config_path}")
             return {}
             
-        # Flatten the hierarchical config
         flat_config = {}
         for section in yaml_config:
             if isinstance(yaml_config[section], dict):
@@ -259,7 +131,6 @@ def get_params():
     parser.add_argument('--amplitude_rescale', type=float, default=0.6)
     parser.add_argument('--center', type=float, default=0.5, help="center of Gaussian solution u")
     parser.add_argument('--U_mean', type=float, default=1.0, help="Mean flow in Navier-Stokes")
-    #TODO test if this helps
     parser.add_argument('--use_mpi_optimized', type=t_or_f, default=False, help="Use MPI-optimized solver parameters")
 
     # Burgers params
@@ -275,7 +146,7 @@ def get_params():
     parser.add_argument('--HO_degree', type=int, default=4, help='higher order degree of loss/evaluation')
 
     #model params
-    parser.add_argument('--model', type=str, default='GNN', choices=['fixed_mesh_1D','fixed_mesh_2D','backFEM_1D','backFEM_2D','GNN','MLP', 'UM2N','UM2N_T'])
+    parser.add_argument('--model', type=str, default='MeshAdaptor', choices=['fixed_mesh_1D','fixed_mesh_2D','backFEM_1D','backFEM_2D','MeshAdaptor'])
     parser.add_argument('--gnn_dont_train', type=str, default="False", help="gnn_dont_train.")
 
     #backFEM params
@@ -313,14 +184,14 @@ def get_params():
     #training params
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--batch_size', type=int, default=1) #todo batch size > 1 not supported for firedrake
+    parser.add_argument('--batch_size', type=int, default=1) #todo batch size > 1 not supported for firedrake yet
     parser.add_argument('--train_idxs', nargs='+', default=None, help="list of data points to overfit to")
     parser.add_argument('--test_idxs', nargs='+', default=None, help="list of data points to overfit to")
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--dropout', type=float, default=0.)
     parser.add_argument('--decay', type=float, default=0.)
-    parser.add_argument('--loss_type', type=str, default='mesh_loss')#, choices=['mesh_loss','pde_loss','pde_loss_firedrake','pde_loss_torch','pinn_loss','mixed_UM2N_pde_loss_firedrake'])
+    parser.add_argument('--loss_type', type=str, default='pde_loss_regularised')
     parser.add_argument('--loss_regulariser_weight', type=float, default=1.0)
     parser.add_argument('--loss_fn', type=str, default='l1', choices=['mse', 'l1'])
     parser.add_argument('--eval_rollout_steps', type=int, default=10)

@@ -113,7 +113,7 @@ def main(opt):
                                 weight_area_loss=opt['weight_area_loss'],
                                 weight_chamfer_loss=opt['weight_chamfer_loss'])
                 
-            elif opt['loss_type'] in ['pde_loss_regularised']:
+            elif opt['loss_type'] == 'pde_loss_regularised':
                 if dataset.dim == 1:
                     n_meshpoints = data.num_nodes
                 elif dataset.dim == 2:
