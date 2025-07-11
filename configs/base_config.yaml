@@ -47,7 +47,7 @@ exp:
   epochs: 5
   batch_size: 1
   gnn_dont_train: false
-  loss_type: "pde_loss_regularised"  # 'pde_loss_firedrake', 'UM2N_loss'
+  loss_type: "pde_loss_regularised"  #  'pde_loss_regularised' or 'UM2N_loss'
   loss_regulariser_weight: 0.01
   lr: 0.001
 
