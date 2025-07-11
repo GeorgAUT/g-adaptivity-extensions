@@ -44,7 +44,7 @@ pde:
 
 # Training/experiment parameters
 exp:
-  epochs: 5
+  epochs: 20
   batch_size: 1
   gnn_dont_train: false
   loss_type: "pde_loss_regularised"  # 'pde_loss_firedrake', 'UM2N_loss'
