@@ -65,7 +65,7 @@ data:
   mesh_dims_test: [[12, 12], [14, 14], [16, 16], [18, 18], [20, 20], [22, 22]]
 ```
 
-Note that you can also work with your own mesh. For this you need to place your custom `.mesh` file in the `/meshes/` folder and specify the filename (no `.mesh` ending) as the `mesh_geometry` parameter.
+Note that you can also work with your own mesh. For this you need to place your custom `.mesh` file in the `meshes/` folder and specify the filename (no `.mesh` ending) as the `mesh_geometry` parameter.
 
 ## ⚠️ Known issues
 
