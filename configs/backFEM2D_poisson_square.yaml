@@ -4,7 +4,7 @@ run:
   wandb_project: "backFEM2D-poisson-square-mixed"
   pde_type: "Poisson"
   data_type: "randg_mix"
-  model: "backFEM2D"
+  model: "backFEM_2D"
 
 data:
   mesh_geometry: "rectangle"
@@ -16,7 +16,6 @@ data:
 
 # Training/experiment parameters adjusted for backFEM2D model
 exp:
-  epochs: 50
-  loss_type: "pde_loss_regularised"  #  'pde_loss_regularised' or 'UM2N_loss'
-  loss_regulariser_weight: 0.01
-  lr: 0.001
+  epochs: 1000
+  loss_type: 'pde_loss_firedrake' #  required for backFEM2D
+  lr: 0.1
