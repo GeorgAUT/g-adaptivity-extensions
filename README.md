@@ -46,7 +46,7 @@ python src/run_pipeline.py --exp_config configs/XXX.yaml
 
 where the folder `configs/` contains a number of configuration files that specify examples shown in the main paper. The simplest example is `configs/poisson_square_mixed.yaml`, which trains a model on the Poisson equation with a square mesh and mixed data types.
 
-## Config file structure
+## 🛠️ Config file structure
 
 The configuration files in `configs/` contain the `base_config.yaml` which contain a larger number of standardised parameter settings (e.g. training and model parameters) together with the experiment config files (e.g. `poisson_square_mixed.yaml`). Any parameter set in an experiment config file will overwrite the base_config setting of the corresponding parameter. Thus as a starting point we suggest users to work with variations on the experiment config files before diving deeper into the code and modifying any base configs.
 
