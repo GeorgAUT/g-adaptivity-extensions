@@ -23,7 +23,7 @@ Once installed in your virtual environment, this will allow you to import g-adap
 The code can generate training and test datasets directly, but this is computationally expensive due to the large number of FEM solves involved.
 
 To save time, we provide precomputed datasets via Zotero:  
-🔗 [https://www.zotero.org/groups/2722052/g-adaptivity](https://www.zotero.org/groups/2722052/g-adaptivity)
+🔗 [https://zenodo.org/records/15800768](https://zenodo.org/records/15800768)
 
 After downloading, place the datasets in the `data/` folder at the repository root:
 
@@ -46,7 +46,7 @@ python src/run_pipeline.py --exp_config configs/XXX.yaml
 
 where the folder `configs/` contains a number of configuration files that specify examples shown in the main paper. The simplest example is `configs/poisson_square_mixed.yaml`, which trains a model on the Poisson equation with a square mesh and mixed data types.
 
-## Config file structure
+## 🛠️ Config file structure
 
 The configuration files in `configs/` contain the `base_config.yaml` which contain a larger number of standardised parameter settings (e.g. training and model parameters) together with the experiment config files (e.g. `poisson_square_mixed.yaml`). Any parameter set in an experiment config file will overwrite the base_config setting of the corresponding parameter. Thus as a starting point we suggest users to work with variations on the experiment config files before diving deeper into the code and modifying any base configs.
 
@@ -65,7 +65,7 @@ data:
   mesh_dims_test: [[12, 12], [14, 14], [16, 16], [18, 18], [20, 20], [22, 22]]
 ```
 
-Note that you can also work with your own mesh. For this you need to place your custom `.mesh` file in the `/meshes/` folder and specify the filename (no `.mesh` ending) as the `mesh_geometry` parameter.
+Note that you can also work with your own mesh. For this you need to place your custom `.mesh` file in the `meshes/` folder and specify the filename (no `.mesh` ending) as the `mesh_geometry` parameter.
 
 ## ⚠️ Known issues
 
