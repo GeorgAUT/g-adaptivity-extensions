@@ -1,9 +1,11 @@
 [project]
-name = "myproject"
+name = "g-adaptivity"
 version = "0.1.0"
-description = "Project using PyTorch, PyTorch Geometric, and related ML libraries"
+description = "Project for GNN-based optimal mesh relocation"
+requires-python = ">=3.9,<3.13"
 authors = [
-  { name = "Your Name", email = "you@example.com" }
+  { name = "James Rowbottom", email = "jr908@cam.ac.uk" },
+  { name = "Georg Maierhofer", email = "gam37@cam.ac.uk" }
 ]
 dependencies = [
   "torch",
@@ -25,7 +27,6 @@ dependencies = [
   # Git dependencies below
   "animate @ git+https://github.com/pyroteus/animate.git",
   "movement @ git+https://github.com/pyroteus/movement.git",
-  #"pytorch3d @ git+https://github.com/facebookresearch/pytorch3d.git@stable"
 ]
 
 [build-system]
