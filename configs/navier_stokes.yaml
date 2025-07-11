@@ -3,7 +3,7 @@
 run:
   wandb_project: "g-adaptivity-navier-stokes"
   pde_type: "NavierStokes"
-  data_type: "randg"
+  data_type: 'RBF'
 
 pde:
   U_mean: 1.0
@@ -11,4 +11,8 @@ pde:
   num_time_steps: 5
 
 data:
-  mesh_geometry: "rectangle"
+  mesh_geometry: 'cylinder_100_025'
+  num_train: 25
+  num_test: 50
+  train_idxs: [353, 251, 190, 327, 221, 226, 105, 234, 285, 177, 163, 223, 268, 223, 297, 237, 132, 117, 224, 360, 269, 349, 213, 175, 139]
+  test_idxs: [328, 321, 347, 192, 168, 386, 353, 180, 231, 261, 289, 277, 201, 303, 291, 372, 114, 354, 110, 120, 156, 299, 191, 328, 399, 163, 317, 209, 152, 163, 324, 339, 257, 217, 135, 275, 370, 279, 296, 225, 251, 215, 100, 109, 115, 381, 212, 119, 381, 161]

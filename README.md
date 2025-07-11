@@ -41,14 +41,31 @@ g-adaptivity/
 To train and evaluate models from the paper, run:
 
 ```bash
-python src/run_pipeline.py --config configs/XXX.yaml
+python src/run_pipeline.py --exp_config configs/XXX.yaml
 ```
 
-where the folder `configs/` contains a number of configuration files that specify examples shown in the main paper including:
+where the folder `configs/` contains a number of configuration files that specify examples shown in the main paper. The simplest example is `configs/poisson_square_mixed.yaml`, which trains a model on the Poisson equation with a square mesh and mixed data types.
 
-- `configs/poisson.yaml`: Training and evaluation of the Poisson equation example.
-- ...
+## Config file structure
 
+The configuration files in `configs/` contain the `base_config.yaml` which contain a larger number of standardised parameter settings (e.g. training and model parameters) together with the experiment config files (e.g. `poisson_square_mixed.yaml`). Any parameter set in an experiment config file will overwrite the base_config setting of the corresponding parameter. Thus as a starting point we suggest users to work with variations on the experiment config files before diving deeper into the code and modifying any base configs.
+
+The major components of the experiment config files are as follows:
+
+```yaml
+# Example configuration file for G-Adaptivity
+run:
+  pde_type: "Poisson"  # 'Poisson', 'Burgers', 'NavierStokes'
+  data_type: "randg_mix"  # 'randg', 'randg_mix', 'RBF'
+  model: "MeshAdaptor"  # 'MeshAdapter', 'backFEM2D'
+
+data:
+  mesh_geometry: "rectangle" # 'polygon_010', 'rectangle', 'cylinder100', 'cylinder015', 'cylinder010', 'H-shape', 'headland1', 'headland2', 'headland05' or 'L-shape'
+  mesh_dims_train: [[15, 15], [20, 20]]
+  mesh_dims_test: [[12, 12], [14, 14], [16, 16], [18, 18], [20, 20], [22, 22]]
+```
+
+Note that you can also work with your own mesh. For this you need to place your custom `.mesh` file in the `/meshes/` folder and specify the filename (no `.mesh` ending) as the `mesh_geometry` parameter.
 
 ## ⚠️ Known issues
 

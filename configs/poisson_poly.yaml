@@ -1,0 +1,9 @@
+# Poisson equation on a polygonal domain
+# Only overrides what's different from base_config.yaml
+run:
+  wandb_project: "g-adaptivity-poisson-poly"
+  pde_type: "Poisson"
+  data_type: "randg_mix"
+
+data:
+  mesh_geometry: "polygon"
