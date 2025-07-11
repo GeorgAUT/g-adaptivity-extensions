@@ -1,6 +1,6 @@
 # G-Adaptivity
 
-This repository contains the official implementation of [G-Adaptivity](https://arxiv.org/abs/2407.04516): a GNN-based approach to adaptive mesh refinement for finite element methods (FEM).
+This repository contains the official implementation of [G-Adaptivity](https://openreview.net/forum?id=pyIXyl4qFx): a GNN-based approach to adaptive mesh refinement for finite element methods (FEM).
 
 ## 📦 Installation
 
