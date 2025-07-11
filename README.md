@@ -31,7 +31,7 @@ g-adaptivity/
     └── <your_downloaded_data_here>
 ```
 
-> ⚠️ The `data/` folder may not exist until you create it manually or run a script that uses it.
+⚠️ The `data/` folder may not exist until you create it manually or run a script that uses it.
 
 
 ## 🚀 Training and Evaluation
