@@ -12,3 +12,10 @@ data:
   mesh_dims_test: [[12, 12], [14, 14], [16, 16], [18, 18], [20, 20], [22, 22]]
   num_train: 1
   num_test: 3
+
+
+# Training/experiment parameters adjusted for backFEM2D model
+exp:
+  epochs: 50
+  loss_type: 'pde_loss_firedrake'
+  lr: 0.01
