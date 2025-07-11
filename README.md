@@ -8,13 +8,15 @@ Our code depends on [Firedrake](https://www.firedrakeproject.org/), a Python-bas
 
 We recommend installing Firedrake via the [official guide](https://www.firedrakeproject.org/install.html#installing-firedrake), which will also set up a dedicated virtual environment.
 
-Once Firedrake is installed and its virtual environment activated, you can install the remaining dependencies from our `pyproject.toml`:
+Once Firedrake is installed and its virtual environment activated, you can install G-Adaptivity and its dependencies from our `pyproject.toml`:
 
 ```bash
 git clone https://github.com/JRowbottomGit/g-adaptivity.git
 cd g-adaptivity
-pip install .
+pip install -e .
 ```
+
+Once installed in your virtual environment, this will allow you to import g-adaptivity to work with your own code and products, as well as run our training and evaluation scripts.
 
 ## 📁 Datasets
 
