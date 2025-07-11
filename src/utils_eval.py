@@ -9,9 +9,9 @@ from firedrake import *
 from firedrake.__future__ import interpolate
 from firedrake.exceptions import ConvergenceError
 
-from src.utils_main import inner_progress
-from src.data_mixed_loader import Mixed_DataLoader
-from src.pde_solvers import get_solve_firedrake_class
+from utils_main import inner_progress
+from data_mixed_loader import Mixed_DataLoader
+from pde_solvers import get_solve_firedrake_class
 
 
 def eval_firedrake_fct(uu, u_true, p=2):

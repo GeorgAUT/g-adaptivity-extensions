@@ -8,7 +8,7 @@ from mpi4py import MPI
 import matplotlib.pyplot as plt
 from firedrake import FunctionSpace, VectorFunctionSpace, Function
 
-from src.params import get_arg_list
+from params import get_arg_list
 
 
 def to_float32(obj):

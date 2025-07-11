@@ -12,9 +12,9 @@ from firedrake import VectorFunctionSpace, Function, dx, inner, assemble, sqrt, 
 from firedrake.pyplot import plot, tripcolor, triplot
 from firedrake import *
 
-from src.utils_main import vizualise_grid_with_edges
-from src.data_mixed_loader import Mixed_DataLoader
-from src.utils_eval import update_mesh_coords
+from utils_main import vizualise_grid_with_edges
+from data_mixed_loader import Mixed_DataLoader
+from utils_eval import update_mesh_coords
 from firedrake_difFEM.solve_poisson import poisson2d_fmultigauss_bcs, poisson1d_fmultigauss_bcs, plot_solutions
 
 def plot_trained_dataset_2d(dataset, model, opt, show_mesh_evol_plots=False):

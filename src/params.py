@@ -217,7 +217,7 @@ def get_params():
     parser = argparse.ArgumentParser()
     
     # Config path arguments
-    parser.add_argument('--base_config', type=str, default='./configs/base_config',
+    parser.add_argument('--base_config', type=str, default='base_config',
                        help='Base YAML config file (without .yaml extension)')
     parser.add_argument('--exp_config', type=str, default=None, 
                        help='Experiment-specific YAML config file (without .yaml extension)')

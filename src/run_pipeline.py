@@ -4,11 +4,11 @@ import yaml
 import torch
 import wandb
 
-from src.params import get_params
-from src.utils_data import make_data_name
-from src.utils_eval import evaluate_model
-from src.utils_eval_plotting import plot_trained_dataset_2d, plot_trained_dataset_3d
-from src.run_GNN import main as run_GNN, get_data
+from params import get_params
+from utils_data import make_data_name
+from utils_eval import evaluate_model
+from utils_eval_plotting import plot_trained_dataset_2d, plot_trained_dataset_3d
+from run_GNN import main as run_GNN, get_data
 from models.mesh_adaptor_model import Mesh_Adaptor
 from models.direct_optimisation import backFEM_2D
 

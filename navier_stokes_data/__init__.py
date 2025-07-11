@@ -1,0 +1,1 @@
+"""G-Adaptivity NS package."""

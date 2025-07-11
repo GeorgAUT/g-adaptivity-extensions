@@ -1,7 +1,7 @@
 from torch_geometric.data import Batch
 
-from src.data import *
-from src.data_mixed_loader import Mixed_DataLoader
+from data import *
+from data_mixed_loader import Mixed_DataLoader
 
 class MeshInMemoryDataset_Mixed(pyg.data.InMemoryDataset):
     def __init__(self, root, num_data, mesh_dims, train_test, opt, transform=None, pre_transform=None, pre_filter=None):
