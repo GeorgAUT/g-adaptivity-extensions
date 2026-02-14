@@ -2,7 +2,7 @@
 name = "g-adaptivity"
 version = "0.1.0"
 description = "Project for GNN-based optimal mesh relocation"
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.9,<3.14"
 authors = [
   { name = "James Rowbottom", email = "jr908@cam.ac.uk" },
   { name = "Georg Maierhofer", email = "gam37@cam.ac.uk" }
