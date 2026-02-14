@@ -1,0 +1,517 @@
+wandb_version: 1
+
+data_dir:
+  desc: null
+  value: ../data
+dataset:
+  desc: null
+  value: fd_ma_2d
+data_type:
+  desc: null
+  value: randg_mix
+data_name:
+  desc: null
+  value: Poisson_randg_mix_2d_train_275_UM2N_MA_approx_slow_rectangle_15_0.1reg_2_3gauss_iso_bin
+data_train_test:
+  desc: null
+  value: train
+num_train:
+  desc: null
+  value: 275
+num_test:
+  desc: null
+  value: 125
+mesh_dims_train:
+  desc: null
+  value:
+  - - 15
+    - 15
+  - - 20
+    - 20
+mesh_dims_test:
+  desc: null
+  value:
+  - - 12
+    - 12
+  - - 13
+    - 13
+  - - 14
+    - 14
+  - - 15
+    - 15
+  - - 16
+    - 16
+  - - 17
+    - 17
+  - - 18
+    - 18
+  - - 19
+    - 19
+  - - 20
+    - 20
+  - - 21
+    - 21
+  - - 22
+    - 22
+  - - 23
+    - 23
+num_gauss_range:
+  desc: null
+  value:
+  - 2
+  - 3
+train_frac:
+  desc: null
+  value: null
+test_frac:
+  desc: null
+  value: null
+mesh_geometry:
+  desc: null
+  value: rectangle
+mesh_dims:
+  desc: null
+  value:
+  - 15
+  - 15
+mesh_file_type:
+  desc: null
+  value: bin
+fast_M2N_monitor:
+  desc: null
+  value: slow
+M2N_alpha:
+  desc: null
+  value: null
+M2N_beta:
+  desc: null
+  value: null
+mesh_type:
+  desc: null
+  value: UM2N_MA_approx_slow
+fix_boundary:
+  desc: null
+  value: true
+mon_reg:
+  desc: null
+  value: 0.1
+mon_power:
+  desc: null
+  value: 0.2
+UM2N_alpha:
+  desc: null
+  value: 5
+pde_type:
+  desc: null
+  value: Poisson
+boundary:
+  desc: null
+  value: dirichlet
+num_gauss:
+  desc: null
+  value: 2
+anis_gauss:
+  desc: null
+  value: false
+rand_gauss:
+  desc: null
+  value: false
+scale:
+  desc: null
+  value: 0.2
+center:
+  desc: null
+  value: 0.5
+nu:
+  desc: null
+  value: 0.001
+burgers_rescale_ic:
+  desc: null
+  value: 0.6
+timestep:
+  desc: null
+  value: 0.02
+num_time_steps:
+  desc: null
+  value: 10
+eval_quad_points:
+  desc: null
+  value: 101
+stiff_quad_points:
+  desc: null
+  value: 3
+eval_refinement_level:
+  desc: null
+  value: 2
+load_quad_points:
+  desc: null
+  value: 101
+HO_degree:
+  desc: null
+  value: 4
+model:
+  desc: null
+  value: UM2N_T
+num_layers:
+  desc: null
+  value: 4
+hidden_dim:
+  desc: null
+  value: 8
+global_feat_dim:
+  desc: null
+  value: 8
+enc:
+  desc: null
+  value: identity
+dec:
+  desc: null
+  value: identity
+non_lin:
+  desc: null
+  value: identity
+residual:
+  desc: null
+  value: true
+mesh_params:
+  desc: null
+  value: internal
+time_step:
+  desc: null
+  value: 0.1
+conv_type:
+  desc: null
+  value: GRAND_plus
+share_conv:
+  desc: null
+  value: true
+gnn_inc_feat_f:
+  desc: null
+  value: true
+gnn_inc_feat_uu:
+  desc: null
+  value: false
+gnn_inc_glob_feat_f:
+  desc: null
+  value: true
+gnn_inc_glob_feat_uu:
+  desc: null
+  value: true
+gnn_normalize:
+  desc: null
+  value: false
+self_loops:
+  desc: null
+  value: false
+softmax_temp_type:
+  desc: null
+  value: null
+softmax_temp:
+  desc: null
+  value: 2.0
+learn_step:
+  desc: null
+  value: false
+gnn_dont_train:
+  desc: null
+  value: false
+reg_skew:
+  desc: null
+  value: false
+gnn_QK_init:
+  desc: null
+  value: none
+gnn_hyper_QK:
+  desc: null
+  value: false
+gnn_drift:
+  desc: null
+  value: null
+gaus_drift_scale:
+  desc: null
+  value: 5.0
+start_from_ma:
+  desc: null
+  value: false
+gat_plus_type:
+  desc: null
+  value: GAT_res_lap
+pretrained_weights:
+  desc: null
+  value: null
+num_transformer_in:
+  desc: null
+  value: 3
+num_transformer_out:
+  desc: null
+  value: 16
+num_transformer_embed_dim:
+  desc: null
+  value: 64
+num_transformer_heads:
+  desc: null
+  value: 4
+num_transformer_layers:
+  desc: null
+  value: 1
+transformer_training_mask:
+  desc: null
+  value: false
+transformer_key_padding_training_mask:
+  desc: null
+  value: false
+transformer_attention_training_mask:
+  desc: null
+  value: false
+transformer_training_mask_ratio_lower_bound:
+  desc: null
+  value: 0.5
+transformer_training_mask_ratio_upper_bound:
+  desc: null
+  value: 0.9
+um2n_laplacian:
+  desc: null
+  value: false
+GNN_diffusion:
+  desc: null
+  value: true
+grand_step_size:
+  desc: null
+  value: 0.1
+new_model_monitor_type:
+  desc: null
+  value: Hessian_Frob_u_tensor
+diffusion_steps:
+  desc: null
+  value: 32
+gauss_amplitude:
+  desc: null
+  value: 0.25
+burgers_limits:
+  desc: null
+  value: 3.0
+plots_multistep_eval:
+  desc: null
+  value: false
+plots_mesh_movement:
+  desc: null
+  value: false
+seed:
+  desc: null
+  value: 1173
+device:
+  desc: null
+  value: cpu
+batch_size:
+  desc: null
+  value: 1
+overfit_num:
+  desc: null
+  value:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+  - 18
+  - 19
+  - 20
+  - 21
+  - 22
+  - 23
+  - 24
+  - 25
+  - 26
+  - 27
+  - 28
+  - 29
+  - 30
+  - 31
+  - 32
+  - 33
+  - 34
+  - 35
+  - 36
+  - 37
+  - 38
+  - 39
+  - 40
+  - 41
+  - 42
+  - 43
+  - 44
+  - 45
+  - 46
+  - 47
+  - 48
+  - 49
+  - 50
+  - 51
+  - 52
+  - 53
+  - 54
+  - 55
+  - 56
+  - 57
+  - 58
+  - 59
+  - 60
+  - 61
+  - 62
+  - 63
+  - 64
+  - 65
+  - 66
+  - 67
+  - 68
+  - 69
+  - 70
+  - 71
+  - 72
+  - 73
+  - 74
+  - 75
+  - 76
+  - 77
+  - 78
+  - 79
+  - 80
+  - 81
+  - 82
+  - 83
+  - 84
+  - 85
+  - 86
+  - 87
+  - 88
+  - 89
+  - 90
+  - 91
+  - 92
+  - 93
+  - 94
+  - 95
+  - 96
+  - 97
+  - 98
+  - 99
+epochs:
+  desc: null
+  value: 300
+lr:
+  desc: null
+  value: 0.001
+dropout:
+  desc: null
+  value: 0.0
+decay:
+  desc: null
+  value: 0.0
+loss_type:
+  desc: null
+  value: pde_loss_regularised
+loss_regulariser_weight:
+  desc: null
+  value: 1
+loss_fn:
+  desc: null
+  value: mse
+evaler:
+  desc: null
+  value: analytical
+show_plots:
+  desc: null
+  value: true
+show_dataset_plots:
+  desc: null
+  value: false
+show_train_evol_plots:
+  desc: null
+  value: true
+show_mesh_evol_plots:
+  desc: null
+  value: true
+show_mesh_plots:
+  desc: null
+  value: false
+wandb:
+  desc: null
+  value: true
+wandb_offline:
+  desc: null
+  value: false
+wandb_sweep:
+  desc: null
+  value: true
+wandb_entity:
+  desc: null
+  value: qls
+wandb_project:
+  desc: null
+  value: MovingMeshGNN
+wandb_group:
+  desc: null
+  value: testing
+wandb_run_name:
+  desc: null
+  value: null
+wandb_log_plots:
+  desc: null
+  value: true
+wandb_save_model:
+  desc: null
+  value: true
+wandb_checkpoint_freq:
+  desc: null
+  value: null
+wandb_exp_idx:
+  desc: null
+  value: 4
+wandb_pivot_dir:
+  desc: null
+  value: ../wandb_analysis
+wandb_artifact_path:
+  desc: null
+  value: null
+_wandb:
+  desc: null
+  value:
+    python_version: 3.13.1
+    cli_version: 0.19.2
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1738023921
+    t:
+      1:
+      - 1
+      - 55
+      - 77
+      2:
+      - 1
+      - 55
+      - 77
+      3:
+      - 2
+      - 14
+      - 16
+      - 23
+      - 37
+      4: 3.13.1
+      5: 0.19.2
+      8:
+      - 5
+      13: darwin-arm64

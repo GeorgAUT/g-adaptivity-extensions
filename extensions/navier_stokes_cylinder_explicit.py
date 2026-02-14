@@ -103,8 +103,19 @@ p_next.assign(p_now)
 Vmag = FunctionSpace(mesh, "CG", 1)
 u_mag_f = Function(Vmag)
 
+p_f = Function(Q)
+omega_f = Function(Vmag)
+
 video_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder.gif"))
 video_path_solution_only = os.path.abspath(os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder_solution.gif"))
+video_path_pressure = os.path.abspath(os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder_pressure.gif"))
+video_path_pressure_solution_only = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder_pressure_solution.gif")
+)
+video_path_vorticity = os.path.abspath(os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder_vorticity.gif"))
+video_path_vorticity_solution_only = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder_vorticity_solution.gif")
+)
 fps = 10
 frame_every = 1
 
@@ -113,6 +124,18 @@ writer = imageio.get_writer(video_path, mode="I", duration=1.0 / fps)
 
 fig_vid_sol, ax_vid_sol = plt.subplots(nrows=1, ncols=1, figsize=(6, 5))
 writer_sol = imageio.get_writer(video_path_solution_only, mode="I", duration=1.0 / fps)
+
+fig_vid_p, ax_vid_p = plt.subplots(nrows=1, ncols=1, figsize=(6, 5))
+writer_p = imageio.get_writer(video_path_pressure, mode="I", duration=1.0 / fps)
+
+fig_vid_p_sol, ax_vid_p_sol = plt.subplots(nrows=1, ncols=1, figsize=(6, 5))
+writer_p_sol = imageio.get_writer(video_path_pressure_solution_only, mode="I", duration=1.0 / fps)
+
+fig_vid_w, ax_vid_w = plt.subplots(nrows=1, ncols=1, figsize=(6, 5))
+writer_w = imageio.get_writer(video_path_vorticity, mode="I", duration=1.0 / fps)
+
+fig_vid_w_sol, ax_vid_w_sol = plt.subplots(nrows=1, ncols=1, figsize=(6, 5))
+writer_w_sol = imageio.get_writer(video_path_vorticity_solution_only, mode="I", duration=1.0 / fps)
 
 for step in range(num_steps):
     print("Remaining Steps: ", num_steps - step, end="\r")
@@ -125,6 +148,12 @@ for step in range(num_steps):
     if step % frame_every == 0:
         u_mag_expr = sqrt(inner(u_now, u_now))
         u_mag_f.project(u_mag_expr)
+
+        p_f.assign(p_now)
+
+        omega_expr = grad(u_now[1])[0] - grad(u_now[0])[1]
+        omega_f.project(omega_expr)
+
         ax_vid.clear()
         tripcolor(u_mag_f, axes=ax_vid)
         triplot(mesh, axes=ax_vid)
@@ -146,10 +175,60 @@ for step in range(num_steps):
         img_sol = rgba_sol[:, :, :3].copy()
         writer_sol.append_data(img_sol)
 
+        ax_vid_p.clear()
+        tripcolor(p_f, axes=ax_vid_p)
+        triplot(mesh, axes=ax_vid_p)
+        ax_vid_p.set_aspect("equal")
+        ax_vid_p.set_title(f"p  t={(step + 1) * float(dt_val):.3f}")
+        fig_vid_p.tight_layout()
+        fig_vid_p.canvas.draw()
+        rgba_p = np.asarray(fig_vid_p.canvas.buffer_rgba())
+        img_p = rgba_p[:, :, :3].copy()
+        writer_p.append_data(img_p)
+
+        ax_vid_p_sol.clear()
+        tripcolor(p_f, axes=ax_vid_p_sol)
+        ax_vid_p_sol.set_aspect("equal")
+        ax_vid_p_sol.set_title(f"p  t={(step + 1) * float(dt_val):.3f}")
+        fig_vid_p_sol.tight_layout()
+        fig_vid_p_sol.canvas.draw()
+        rgba_p_sol = np.asarray(fig_vid_p_sol.canvas.buffer_rgba())
+        img_p_sol = rgba_p_sol[:, :, :3].copy()
+        writer_p_sol.append_data(img_p_sol)
+
+        ax_vid_w.clear()
+        tripcolor(omega_f, axes=ax_vid_w)
+        triplot(mesh, axes=ax_vid_w)
+        ax_vid_w.set_aspect("equal")
+        ax_vid_w.set_title(f"vorticity  t={(step + 1) * float(dt_val):.3f}")
+        fig_vid_w.tight_layout()
+        fig_vid_w.canvas.draw()
+        rgba_w = np.asarray(fig_vid_w.canvas.buffer_rgba())
+        img_w = rgba_w[:, :, :3].copy()
+        writer_w.append_data(img_w)
+
+        ax_vid_w_sol.clear()
+        tripcolor(omega_f, axes=ax_vid_w_sol)
+        ax_vid_w_sol.set_aspect("equal")
+        ax_vid_w_sol.set_title(f"vorticity  t={(step + 1) * float(dt_val):.3f}")
+        fig_vid_w_sol.tight_layout()
+        fig_vid_w_sol.canvas.draw()
+        rgba_w_sol = np.asarray(fig_vid_w_sol.canvas.buffer_rgba())
+        img_w_sol = rgba_w_sol[:, :, :3].copy()
+        writer_w_sol.append_data(img_w_sol)
+
 writer.close()
 plt.close(fig_vid)
 writer_sol.close()
 plt.close(fig_vid_sol)
+writer_p.close()
+plt.close(fig_vid_p)
+writer_p_sol.close()
+plt.close(fig_vid_p_sol)
+writer_w.close()
+plt.close(fig_vid_w)
+writer_w_sol.close()
+plt.close(fig_vid_w_sol)
 
 u_mag_expr = sqrt(inner(u_now, u_now))
 u_mag_f.project(u_mag_expr)
@@ -173,3 +252,7 @@ plt.show()
 
 print(f"Wrote video to: {video_path}")
 print(f"Wrote video to: {video_path_solution_only}")
+print(f"Wrote video to: {video_path_pressure}")
+print(f"Wrote video to: {video_path_pressure_solution_only}")
+print(f"Wrote video to: {video_path_vorticity}")
+print(f"Wrote video to: {video_path_vorticity_solution_only}")
