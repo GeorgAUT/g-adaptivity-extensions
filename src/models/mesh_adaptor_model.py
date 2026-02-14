@@ -174,7 +174,11 @@ class Mesh_Adaptor(nn.Module):
 
         filter_monitor_val = np.minimum(1e3, monitor_val_data)
         filter_monitor_val = np.maximum(0, filter_monitor_val)
-        monitor_val.dat.data[:] = filter_monitor_val / filter_monitor_val.max()
+        denom = float(np.max(filter_monitor_val))
+        if not np.isfinite(denom) or denom <= 0.0:
+            monitor_val.dat.data[:] = 0.0
+        else:
+            monitor_val.dat.data[:] = filter_monitor_val / denom
         dim = coords.shape[1]
         if dim == 3:
             conv_feat = get_conv_feat_3d(data.coarse_mesh[0], monitor_val)
