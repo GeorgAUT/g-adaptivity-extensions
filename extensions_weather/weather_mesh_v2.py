@@ -444,7 +444,7 @@ atlas_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "atlas2.png
 atlas_img = plt.imread(atlas_path)
 
 frame_paths = []
-for t_idx in range(85680, 85795): #range(85680, 85720):
+for t_idx in range(85680, 85900): #range(85680, 85720):
     print(f"Processing time index: {t_idx}")
     slice_t_na = get_north_atlantic_slice(da, t_idx)
     values = np.asarray(slice_t_na.values)
@@ -477,7 +477,10 @@ for t_idx in range(85680, 85795): #range(85680, 85720):
     if not torch.isfinite(x_phys).all():
         raise ValueError(f"Non-finite predicted coordinates at t={t_idx}")
 
-    mesh.coordinates.dat.data[:] = x_phys.detach().cpu().numpy()
+    x_np = x_phys.detach().cpu().numpy()
+    x_np[:, 0] = x_np[:, 0] * float(lon.max() - lon.min()) + float(lon.min())
+    x_np[:, 1] = x_np[:, 1] * float(lat.max() - lat.min()) + float(lat.min())
+    mesh.coordinates.dat.data[:] = x_np
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 7))
     ax.imshow(
