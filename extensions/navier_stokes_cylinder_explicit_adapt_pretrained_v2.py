@@ -116,9 +116,17 @@ u_mag_ghost = Function(Vmag_ghost)
 video_path = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder_adapted_u.gif")
 )
+video_path_mesh = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "navier_stokes_cylinder_adapted_mesh.gif")
+)
 fps = 10
-fig_vid, ax_vid = plt.subplots(nrows=1, ncols=1, figsize=(6, 5))
+video_figsize = (10, 8)
+video_dpi = 200
+fig_vid, ax_vid = plt.subplots(nrows=1, ncols=1, figsize=video_figsize, dpi=video_dpi)
 writer = imageio.get_writer(video_path, mode="I", duration=1.0 / fps)
+
+fig_vid_mesh, ax_vid_mesh = plt.subplots(nrows=1, ncols=1, figsize=video_figsize, dpi=video_dpi)
+writer_mesh = imageio.get_writer(video_path_mesh, mode="I", duration=1.0 / fps)
 
 nu = Constant(nu_val)
 k = Constant(dt_val)
@@ -251,6 +259,16 @@ for step in range(num_steps):
         img = rgba[:, :, :3].copy()
         writer.append_data(img)
 
+        ax_vid_mesh.clear()
+        ax_vid_mesh.triplot(triang, linewidth=0.25, color="k")
+        ax_vid_mesh.set_aspect("equal")
+        ax_vid_mesh.set_title(f"Adapted mesh (pretrained)  t={(step + 1) * float(dt_val):.3f}")
+        fig_vid_mesh.tight_layout()
+        fig_vid_mesh.canvas.draw()
+        rgba_mesh = np.asarray(fig_vid_mesh.canvas.buffer_rgba())
+        img_mesh = rgba_mesh[:, :, :3].copy()
+        writer_mesh.append_data(img_mesh)
+
 reg_coords = mesh.coordinates.copy(deepcopy=True)
 
 pyg_data = firedrake_mesh_to_PyG(mesh)
@@ -321,8 +339,11 @@ plt.show()
 
 writer.close()
 plt.close(fig_vid)
+writer_mesh.close()
+plt.close(fig_vid_mesh)
 
 print(f"Wrote video to: {video_path}")
+print(f"Wrote mesh-only video to: {video_path_mesh}")
 
 print(f"W&B run: {wandb_run_path}")
 print(f"Loaded weights: {model_filename}")
